@@ -6,14 +6,14 @@ UTA 将 Mac 上选定的真实 USB 设备，通过 SSH 接入远程 Linux 服务
 服务器上的工具直接使用虚拟 USB 和对应串口，固件与编译环境留在服务器，
 无需来回下载文件到本机烧录。
 
-**当前状态：0.1 实验原型，build 13。** 已完成部分开发板实机验证，尚未完成通用 USB
+**当前状态：0.1 实验原型，build 14（Preview 2）。** 已完成部分开发板实机验证，尚未完成通用 USB
 兼容性验收。当前支持 **macOS Apple Silicon → Linux**，没有 Windows 或 iOS 客户端。
 提供预编译安装包与源码。预览版已签名，但尚未经过 Apple 公证。
 
 ## 下载 Mac 预览版
 
-**[下载 DMG 安装包](https://github.com/TailorLiuuu/UTA/releases/download/v0.1.0-preview.1/UTA-0.1.0-macOS-arm64.dmg)** ·
-[Release 与 ZIP 备用包](https://github.com/TailorLiuuu/UTA/releases/tag/v0.1.0-preview.1) ·
+**[下载 DMG 安装包](https://github.com/TailorLiuuu/UTA/releases/download/v0.1.0-preview.2/UTA-0.1.0-macOS-arm64.dmg)** ·
+[Release 与 ZIP 备用包](https://github.com/TailorLiuuu/UTA/releases/tag/v0.1.0-preview.2) ·
 [首次安装指南](docs/INSTALL-macOS.md)
 
 适用于 Apple Silicon / macOS 26，需另行安装 Python 3.9+。打开 DMG，将 UTA 拖入
@@ -177,15 +177,17 @@ sudo -n uta-server status --session SESSION_ID
 已选设备断开后，UTA 最多等待 120 秒、尝试 3 次，先清理旧会话，再接回原服务器。
 默认只接受原插口、原 VID:PID；有序列号时还会校验身份。
 
-若设备进入另一模式会改变 VID:PID，可在设备卡片的“允许重连的 USB 标识”添加，
-或连接时显式指定（可重复）：
+若设备进入另一模式会改变 VID:PID，卡片会提示“是否仍是刚才的设备？”。
+确认后接回原服务器，并记住此模式；选择“不是，留在本机”会取消这次等待。
+通常不必手填标识。高级设置仍可查看、编辑或清除记忆；CLI 也可显式指定（可重复）：
 
 ```bash
 "$UTA" connect --device BUSID --server SERVER_ID \
   --reconnect auto --reconnect-id 1234:5678
 ```
 
-`1234:5678` 是示例，应替换为设备实际标识。配置限定当前连接；新建连接后应确认设置。
+`1234:5678` 是示例，应替换为设备实际标识。CLI 参数限定当前连接；界面确认或高级设置保存的记忆按原服务器、插口和原设备身份保存。
+重新启动后再次手动接入原设备可复用，不会因保存记忆就自动接管设备。
 手动断开、关闭重连会取消等待；控制器重启不恢复接管意图。
 无序列号设备无法区分同口替换的同型号硬件，等待期间不要换板。
 
@@ -222,7 +224,7 @@ node --test tests/test_usb_adapter.mjs
 
 Node.js 18+ 仅用于可选适配器及其测试；基础透传不需要 Node。
 测试包含本地 socket、原生 USB/IP 合成设备、模拟 sysfs 和控制器逻辑；环境需允许本地监听。
-build 13 已通过 64 个 Python 测试和 3 个 Node 测试。构建与自动化测试不能替代实机验收。
+Build 14 通过 70 个 Python 测试和 3 个 Node 测试。构建与自动化测试不能替代实机验收。
 
 ```text
 macos/    SwiftUI 界面、系统授权与 XPC 辅助服务

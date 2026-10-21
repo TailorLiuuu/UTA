@@ -1,4 +1,12 @@
-# Local changes
+# Changes
+
+## Build 14 — v0.1.0-preview.2 · 2026-10-22
+
+- Server and overview sidebar rows accept clicks across their full area.
+- New USB mode identities prompt for confirmation before reconnecting. Decisions
+  are revalidated against a fresh USB scan and expire with the reconnect window.
+- Confirmed modes persist per server, original USB port and original identity.
+  Advanced settings can inspect, edit or forget them; restart never claims devices.
 
 ## Build 13 — generic USB boundary
 

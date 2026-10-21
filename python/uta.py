@@ -67,6 +67,23 @@ def reconnect_matches(anchor, device):
     return True
 
 
+def usb_identity(device):
+    return {key: device.get(key, "") for key in ("busid", "vidpid", "serial")}
+
+
+def confirmable_mode(anchor, device):
+    return (anchor.get("busid") == device.get("busid")
+            and anchor.get("vidpid") != device.get("vidpid")
+            and bool(USB_ID.fullmatch(device.get("vidpid", "")))
+            and (not anchor.get("serial") or not device.get("serial")
+                 or anchor["serial"] == device["serial"]))
+
+
+def reconnect_rule_key(server_id, anchor):
+    data = dict(server=server_id, **usb_identity(anchor))
+    return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
+
+
 def atomic_json(path, data):
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2))
@@ -252,12 +269,15 @@ class Controller:
         path = HOME / "config.json"
         if path.exists():
             self.config = json.loads(path.read_text())
+        self.rules_path = HOME / "reconnect-rules.json"
+        self.reconnect_rules = json.loads(self.rules_path.read_text()) if self.rules_path.exists() else {}
         self.devices = []
         self.scan_error = ""
         self.sessions = {}
         self.pending_path = HOME / "pending-cleanup.json"
         if self.pending_path.exists():
             for item in json.loads(self.pending_path.read_text()):
+                item.pop("reconnect_candidate", None)
                 item.update(state="local", nodes=[], remote_cleanup_pending=True,
                             reconnect_deadline=0,
                             cleanup_retry_at=0,
@@ -276,6 +296,21 @@ class Controller:
 
     def save(self):
         atomic_json(HOME / "config.json", self.config)
+
+    def remembered_ids(self, server_id, anchor):
+        return reconnect_ids(self.reconnect_rules.get(reconnect_rule_key(server_id, anchor), []))
+
+    def remember_ids(self, item, ids):
+        ids = reconnect_ids(ids)
+        key = reconnect_rule_key(item["server_id"], item["reconnect_anchor"])
+        rules = dict(self.reconnect_rules)
+        if ids:
+            rules[key] = ids
+        else:
+            rules.pop(key, None)
+        atomic_json(self.rules_path, rules)
+        self.reconnect_rules = rules
+        item["reconnect_remembered"] = bool(ids)
 
     def server(self, server_id):
         item = next((s for s in self.config["servers"] if s["id"] == server_id), None)
@@ -369,6 +404,8 @@ class Controller:
         with self.lock:
             if not preserve_reconnect and busid in self.sessions:
                 self.sessions[busid]["reconnect_deadline"] = 0
+            if busid in self.sessions:
+                self.sessions[busid].pop("reconnect_candidate", None)
             old = copy.deepcopy(self.sessions.get(busid))
         if not old:
             return
@@ -422,6 +459,7 @@ class Controller:
                 if not deadline or busid in self.busy:
                     continue
                 if time.time() >= deadline:
+                    item.pop("reconnect_candidate", None)
                     if busid in self.processes or item.get("state") in ("connecting", "enumerating"):
                         item["reconnect_deadline"] = 0
                         self.background(busid, lambda b=busid: self.disconnect(b, "自动重连等待已结束"))
@@ -433,16 +471,28 @@ class Controller:
                 if (self.scan_error or not item.get("reconnect_enabled") or item.get("remote_cleanup_pending")
                         or item.get("state") not in ("waiting_reconnect", "error")
                         or time.time() < item.get("reconnect_retry_at", 0)):
+                    item.pop("reconnect_candidate", None)
                     continue
                 if item.get("reconnect_attempts", 0) >= 3:
+                    item.pop("reconnect_candidate", None)
                     item.update(reconnect_deadline=0, state="error", message="自动重连已尝试 3 次，请检查连接后手动接入")
                     continue
                 device = next((d for d in self.devices if d["busid"] == busid), None)
                 if not device:
+                    item.pop("reconnect_candidate", None)
                     continue
                 if not reconnect_matches(item["reconnect_anchor"], device):
-                    item["message"] = "当前插口的设备标识不匹配，未自动接入；正在等待原设备"
+                    if confirmable_mode(item["reconnect_anchor"], device):
+                        candidate = item.get("reconnect_candidate")
+                        if not candidate or usb_identity(candidate) != usb_identity(device):
+                            item["reconnect_candidate"] = dict(usb_identity(device),
+                                name=device.get("name", "USB 设备"), token=uuid.uuid4().hex)
+                        item["message"] = "同一插口出现新的 USB 标识，请确认是否仍是刚才的设备"
+                    else:
+                        item.pop("reconnect_candidate", None)
+                        item["message"] = "当前插口的设备身份不匹配，请手动检查设备"
                     continue
+                item.pop("reconnect_candidate", None)
                 item["reconnect_attempts"] = item.get("reconnect_attempts", 0) + 1
                 item["reconnect_retry_at"] = time.time() + 5
                 host = self.server(item["server_id"])
@@ -472,6 +522,8 @@ class Controller:
                 enabled = reconnect_enabled if reconnect_enabled is not None else (old or {}).get("reconnect_enabled", True)
                 anchor = old["reconnect_anchor"] if automatic else {k: device.get(k, "") for k in ("busid", "vidpid", "serial")}
                 ids = (old or {}).get("reconnect_ids", []) if old and reconnect_matches(old.get("reconnect_anchor", {}), device) else []
+                if not automatic:
+                    ids = sorted(set(ids + self.remembered_ids(server["id"], anchor)))
                 if allowed_ids is not None:
                     ids = reconnect_ids(allowed_ids)
                 ids = sorted(set(ids + [anchor["vidpid"], device["vidpid"]]))
@@ -482,6 +534,7 @@ class Controller:
                     created=time.time(), updated=time.time(), reconnect_enabled=enabled,
                     reconnect_anchor=anchor,
                     reconnect_ids=ids,
+                    reconnect_remembered=bool(self.remembered_ids(server["id"], anchor)),
                     route_id=old.get("route_id", uuid.uuid4().hex) if automatic else uuid.uuid4().hex,
                     reconnect_deadline=old.get("reconnect_deadline", 0) if automatic else 0,
                     reconnect_attempts=old.get("reconnect_attempts", 0) if automatic else 0,
@@ -709,6 +762,51 @@ class Controller:
             return {"started": True}
         if action == "server_manual":
             return manual_install_plan(self.server(request["id"]))
+        if action in ("reconnect_confirm", "reconnect_reject", "reconnect_forget"):
+            busid = str(request["busid"])
+            # Confirmation checks the physical device again, not just a UI snapshot.
+            fresh = json.loads(run([str(NATIVE), "list"], timeout=8)) if action == "reconnect_confirm" else []
+            if fresh:
+                access = inspect_devices(fresh)
+                for device in fresh:
+                    device["access"] = access.get(device["busid"])
+            with self.lock:
+                item = self.sessions.get(busid)
+                if not item or busid in self.busy:
+                    raise RuntimeError("设备正在处理或连接已结束，请刷新")
+                if action == "reconnect_forget":
+                    self.remember_ids(item, [])
+                    ids = [item["reconnect_anchor"]["vidpid"]]
+                    item["reconnect_ids"] = ids
+                    item["reconnect_anchor"]["allowed_vidpids"] = ids
+                    item.pop("reconnect_candidate", None)
+                    return {}
+                candidate = item.get("reconnect_candidate")
+                if (not candidate or candidate["token"] != request.get("token")
+                        or item.get("state") not in ("waiting_reconnect", "error")
+                        or not item.get("reconnect_enabled") or item.get("remote_cleanup_pending")
+                        or item.get("reconnect_deadline", 0) <= time.time()):
+                    raise RuntimeError("确认已失效，设备状态或等待时间已变化，请刷新")
+                if action == "reconnect_reject":
+                    item.update(reconnect_deadline=0, state="local", message="已取消重连，设备留在本机")
+                    item.pop("reconnect_candidate", None)
+                    return {}
+                current = next((d for d in fresh if d["busid"] == busid), None)
+                if (current is None or usb_identity(current) != usb_identity(candidate)
+                        or not confirmable_mode(item["reconnect_anchor"], current)):
+                    item.pop("reconnect_candidate", None)
+                    raise RuntimeError("设备已拔出或标识再次变化，请等待新的确认提示")
+                ids = sorted(set(item.get("reconnect_ids", []) +
+                                 [item["reconnect_anchor"]["vidpid"], current["vidpid"]]))
+                self.remember_ids(item, ids)
+                item["reconnect_ids"] = ids
+                item["reconnect_anchor"]["allowed_vidpids"] = ids
+                item.pop("reconnect_candidate", None)
+                item.update(reconnect_retry_at=0, message="已记住设备模式，正在重新接入原服务器…")
+                self.devices = fresh
+                self.scan_error = ""
+            self.retry_reconnect()
+            return {}
         if action == "reconnect_policy":
             busid, enabled = str(request["busid"]), request["enabled"]
             if not isinstance(enabled, bool):
@@ -720,13 +818,16 @@ class Controller:
                 item = self.sessions.get(busid)
                 if not item:
                     raise ValueError("请先接入设备")
-                item["reconnect_enabled"] = enabled
                 if allowed is not None:
                     ids = allowed
                     ids = sorted(set(ids + [item["reconnect_anchor"]["vidpid"], item["vidpid"]]))
+                    self.remember_ids(item, ids)
                     item["reconnect_ids"] = ids
                     item["reconnect_anchor"]["allowed_vidpids"] = ids
+                    item.pop("reconnect_candidate", None)
+                item["reconnect_enabled"] = enabled
                 if not enabled:
+                    item.pop("reconnect_candidate", None)
                     item["reconnect_deadline"] = 0
                     if item["state"] == "waiting_reconnect":
                         item.update(state="local", message="自动重连已取消；云端清理仍会继续" if item.get("remote_cleanup_pending") else "自动重连已取消，设备在本地")

@@ -99,6 +99,11 @@ struct USBAccessView: View {
         }
     }
 }
+struct ReconnectCandidate: Decodable {
+    let name: String
+    let vidpid: String
+    let token: String
+}
 struct Session: Decodable {
     let busid: String
     let name: String?
@@ -114,6 +119,8 @@ struct Session: Decodable {
     let reconnectEnabled: Bool?
     let reconnectDeadline: Double?
     let reconnectIds: [String]?
+    let reconnectCandidate: ReconnectCandidate?
+    let reconnectRemembered: Bool?
     var isActive: Bool { ["connecting", "enumerating", "attached", "disconnecting", "waiting_reconnect"].contains(state) }
 }
 
@@ -123,14 +130,34 @@ struct ReconnectControl: View {
     @State private var identityText = ""
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
-            Toggle("模式切换后自动重连", isOn: Binding(
+            Toggle("允许设备切换模式后重新接入", isOn: Binding(
                 get: { session.reconnectEnabled ?? false },
                 set: { enabled in Task { await model.call(["action": "reconnect_policy", "busid": session.busid, "enabled": enabled]) } }))
                 .toggleStyle(.checkbox).disabled(model.state.busy.contains(session.busid))
             if session.reconnectEnabled == true {
-                Text("断开后等待 2 分钟，按原 USB 插口与已允许的设备标识接回原服务器。")
+                Text("断开后等待 2 分钟。首次出现新模式时请你确认，之后会记住并自动接回。")
                     .font(.system(size: 11)).foregroundStyle(muted)
-                DisclosureGroup("允许重连的 USB 标识") {
+                if let candidate = session.reconnectCandidate, session.state == "waiting_reconnect" || session.state == "error" {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label("是否仍是刚才的设备？", systemImage: "questionmark.circle")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text("同一 USB 插口出现了新标识：\(candidate.name)（\(candidate.vidpid)）。如果你刚刚切换了设备模式，请确认；如果换了另一台设备，请取消。")
+                            .font(.system(size: 12))
+                        Text("确认后接回 \(model.host(session.serverId)?.name ?? "原服务器")，并记住此模式。")
+                            .font(.system(size: 11)).foregroundStyle(muted)
+                        HStack {
+                            Button("是，记住并接回") {
+                                Task { await model.call(["action": "reconnect_confirm", "busid": session.busid, "token": candidate.token]) }
+                            }.buttonStyle(.borderedProminent).tint(accent)
+                            Button("不是，留在本机") {
+                                Task { await model.call(["action": "reconnect_reject", "busid": session.busid, "token": candidate.token]) }
+                            }
+                        }.disabled(model.state.busy.contains(session.busid))
+                    }.padding(12).background(accent.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+                }
+                DisclosureGroup("高级：已允许的设备标识") {
+                    Text(session.reconnectRemembered == true ? "已记住：仅用于此服务器、原插口和原设备身份。" : "一般不需要手动填写，出现新模式时确认即可。")
+                        .font(.system(size: 11)).foregroundStyle(muted)
                     HStack {
                         TextField("VID:PID，多个用逗号分隔", text: $identityText)
                             .textFieldStyle(.roundedBorder)
@@ -139,9 +166,13 @@ struct ReconnectControl: View {
                             Task { await model.call(["action": "reconnect_policy", "busid": session.busid, "enabled": true, "vidpids": ids]) }
                         }.disabled(model.state.busy.contains(session.busid))
                     }
-                    Text("只在设备切换模式后 VID:PID 改变时添加。UTA 不识别或执行设备协议。")
+                    Button("清除已记住的模式") {
+                        Task { await model.call(["action": "reconnect_forget", "busid": session.busid]) }
+                    }.disabled(model.state.busy.contains(session.busid) || ((session.reconnectIds?.count ?? 0) < 2 && session.reconnectRemembered != true))
+                    Text("清除后仅保留最初标识。没有序列号的设备无法区分同口替换的同型号板，请勿在等待期间换板。")
                         .font(.system(size: 11)).foregroundStyle(muted)
                 }.onAppear { identityText = (session.reconnectIds ?? [session.vidpid ?? ""]).joined(separator: ", ") }
+                    .onChange(of: session.reconnectIds) { _, ids in identityText = (ids ?? []).joined(separator: ", ") }
             }
             if session.state == "waiting_reconnect", let deadline = session.reconnectDeadline {
                 Text("等待至 \(Date(timeIntervalSince1970: deadline).formatted(date: .omitted, time: .standard)) · 点击断开可取消")
@@ -845,7 +876,9 @@ struct ContentView: View {
                     Text("设备总览")
                     Spacer()
                     Text("\(knownDeviceCount)").foregroundStyle(muted)
-                }.font(.system(size: 13, weight: .medium)).padding(12)
+                }.font(.system(size: 13, weight: .medium))
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(12)
+                    .contentShape(Rectangle())
                     .background(model.selected == nil ? accent.opacity(0.09) : .clear, in: RoundedRectangle(cornerRadius: 9))
             }.buttonStyle(.plain).padding(.horizontal, 12)
             HStack {
@@ -867,7 +900,8 @@ struct ContentView: View {
                                 Spacer(minLength: 0)
                                 Circle().fill(model.state.checks[host.id]?.state == "ready" ? accent : Color.gray.opacity(0.4))
                                     .frame(width: 6, height: 6)
-                            }.padding(12)
+                            }.frame(maxWidth: .infinity, alignment: .leading).padding(12)
+                                .contentShape(Rectangle())
                                 .background(model.selected == host.id ? accent.opacity(0.09) : .clear, in: RoundedRectangle(cornerRadius: 9))
                         }.buttonStyle(.plain)
                     }
