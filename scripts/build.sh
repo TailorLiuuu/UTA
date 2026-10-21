@@ -1,6 +1,13 @@
 #!/bin/bash
 set -euo pipefail
 uta_sign_identity=${UTA_SIGN_IDENTITY:--}
+uta_timestamp=${UTA_SIGN_TIMESTAMP:-none}
+if [ "$uta_timestamp" != "none" ] && [ "$uta_timestamp" != "secure" ]; then
+    echo "UTA_SIGN_TIMESTAMP must be none or secure" >&2
+    exit 1
+fi
+uta_timestamp_flag=--timestamp=none
+if [ "$uta_timestamp" = "secure" ]; then uta_timestamp_flag=--timestamp; fi
 if [ "$uta_sign_identity" = "-" ]; then
     if [ "${UTA_ALLOW_ADHOC:-0}" != "1" ]; then
         echo "Set UTA_SIGN_IDENTITY to a valid Developer ID identity. UI-only ad-hoc builds require UTA_ALLOW_ADHOC=1." >&2
@@ -28,7 +35,7 @@ swiftc -swift-version 5 -parse-as-library -O \
 swiftc -swift-version 5 -parse-as-library -O \
     -module-cache-path "$uta_root/build/swift-cache" \
     macos/USBHelperClient.swift macos/USBHelperProtocol.swift -o "$app/Contents/Resources/bin/uta-helper-client"
-codesign --force --sign "$uta_sign_identity" --options runtime --timestamp=none --identifier dev.uta.helper-client "$app/Contents/Resources/bin/uta-helper-client"
+codesign --force --sign "$uta_sign_identity" --options runtime "$uta_timestamp_flag" --identifier dev.uta.helper-client "$app/Contents/Resources/bin/uta-helper-client"
 python3 - "$app/Contents/Resources/bin/uta-helper-client" "$stage/HelperPolicy.swift" <<'PY'
 import subprocess,re,sys
 info = subprocess.run(["codesign","-d","--verbose=4",sys.argv[1]],capture_output=True,text=True,check=True).stderr
@@ -97,10 +104,10 @@ chmod +x "$app/Contents/Resources/uta" "$app/Contents/Resources/bin/uta-native"
 xattr -cr "$app"
 for binary in "$app/Contents/Resources/bin/"*; do
     # The helper pins this exact client's signature; never re-sign it afterwards.
-    if [ "$(basename "$binary")" != "uta-helper-client" ]; then codesign --force --sign "$uta_sign_identity" --options runtime --timestamp=none "$binary"; fi
+    if [ "$(basename "$binary")" != "uta-helper-client" ]; then codesign --force --sign "$uta_sign_identity" --options runtime "$uta_timestamp_flag" "$binary"; fi
 done
-codesign --force --sign "$uta_sign_identity" --options runtime --timestamp=none --identifier dev.uta.usb-helper "$app/Contents/MacOS/UTAUSBHelper"
-codesign --force --sign "$uta_sign_identity" --options runtime --timestamp=none "$app"
+codesign --force --sign "$uta_sign_identity" --options runtime "$uta_timestamp_flag" --identifier dev.uta.usb-helper "$app/Contents/MacOS/UTAUSBHelper"
+codesign --force --sign "$uta_sign_identity" --options runtime "$uta_timestamp_flag" "$app"
 codesign --verify --deep --strict "$app"
 chmod +x dist/uta-server
 cp dist/uta-server "$stage/uta-server"
@@ -110,6 +117,7 @@ cp dist/uta-usb-io "$stage/uta-usb-io"
 cp linux/uta-usb-transport.mjs dist/uta-usb-transport.mjs
 cp dist/uta-usb-transport.mjs "$stage/uta-usb-transport.mjs"
 cp docs/TESTING.md "$stage/TESTING.md"
+cp docs/INSTALL-macOS.md "$stage/INSTALL-macOS.txt"
 cat > "$stage/uta" <<'SH'
 #!/bin/sh
 set -eu

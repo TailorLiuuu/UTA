@@ -8,7 +8,17 @@ UTA 将 Mac 上选定的真实 USB 设备，通过 SSH 接入远程 Linux 服务
 
 **当前状态：0.1 实验原型，build 13。** 已完成部分开发板实机验证，尚未完成通用 USB
 兼容性验收。当前支持 **macOS Apple Silicon → Linux**，没有 Windows 或 iOS 客户端。
-本仓库提供源码与构建脚本，不包含已公证的即装版 App。
+提供预编译安装包与源码。预览版已签名，但尚未经过 Apple 公证。
+
+## 下载 Mac 预览版
+
+**[下载 DMG 安装包](https://github.com/TailorLiuuu/UTA/releases/download/v0.1.0-preview.1/UTA-0.1.0-macOS-arm64.dmg)** ·
+[Release 与 ZIP 备用包](https://github.com/TailorLiuuu/UTA/releases/tag/v0.1.0-preview.1) ·
+[首次安装指南](docs/INSTALL-macOS.md)
+
+适用于 Apple Silicon / macOS 26，需另行安装 Python 3.9+。打开 DMG，将 UTA 拖入
+Applications，然后从“应用程序”启动。未公证的预览版可能需要在“隐私与安全性”中允许打开；
+USB 接管还需单独完成系统授权。首次安装、升级和卸载步骤见安装指南。
 
 ## 能做什么
 
@@ -72,7 +82,8 @@ UTA_SIGN_IDENTITY="Developer ID Application: YOUR NAME (TEAM_ID)" bash scripts/b
 ```
 
 构建脚本不会下载源码依赖；USB/IP、Asio、spdlog 源码已包含在 `vendor/`。
-App 与接管辅助服务使用同一签名身份。脚本未执行公证，也未添加可信签名时间戳。
+App 与接管辅助服务使用同一签名身份。默认本地构建不添加可信时间戳；
+发布构建设置 `UTA_SIGN_TIMESTAMP=secure`，需要连接 Apple 时间戳服务。脚本不执行公证。
 
 仅做界面、协议开发时可以使用临时签名：
 
@@ -91,6 +102,7 @@ UTA_ALLOW_ADHOC=1 bash scripts/build.sh
 | `dist/uta-usb-io`、`dist/uta-usb-transport.mjs` | 可选的通用异步 USB 接口，供外部应用主动接入 |
 
 建议从 ZIP 解压安装 App；构建在临时目录完成签名和归档，避免同步目录元数据影响签名。
+构建后可运行 `UTA_SIGN_IDENTITY="你的签名身份" bash scripts/package-macos.sh` 制作 DMG。
 
 ## 快速开始
 

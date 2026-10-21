@@ -12,7 +12,7 @@
 - 当前预编译 App：Apple Silicon / macOS 26，需 Python 3.9+。
   Mac 上需先安装 Python 3。
   libusb 和 USB/IP 动态库已包含在 App 中，不必另外装 VirtualHere。
-- 当前构建使用 Developer ID 签名，尚未公证，签名未加可信时间戳。
+- 发布预览包使用 Developer ID 签名与可信时间戳，尚未公证；本地构建默认不加时间戳。
   拷到其他电脑可能需要在“隐私与安全性”中允许打开。
 - Linux：Python 3.9+、OpenSSH、支持 `CONFIG_USBIP_VHCI_HCD` 的内核；
   需要 root 或经管理员配置的 sudo 权限。普通受限容器通常不满足。
