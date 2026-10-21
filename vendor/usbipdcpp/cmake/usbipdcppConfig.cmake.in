@@ -1,0 +1,30 @@
+@PACKAGE_INIT@
+
+
+include("${CMAKE_CURRENT_LIST_DIR}/usbipdcppTargets.cmake")
+
+
+include(CMakeFindDependencyMacro)
+
+find_dependency(asio)
+find_dependency(spdlog)
+
+# 如果 usbipdcpp::libusb 目标存在，无论是否请求组件都要创建 PkgConfig::libusb
+if(TARGET usbipdcpp::libusb)
+    find_dependency(PkgConfig)
+    pkg_check_modules(libusb REQUIRED IMPORTED_TARGET libusb-1.0)
+endif()
+
+if (virtual_device IN_LIST usbipdcpp_FIND_COMPONENTS)
+    if(TARGET usbipdcpp::virtual_device)
+        set(usbipdcpp_virtual_device_FOUND TRUE)
+    endif()
+endif ()
+
+if (libusb IN_LIST usbipdcpp_FIND_COMPONENTS)
+    if(TARGET usbipdcpp::libusb)
+        set(usbipdcpp_libusb_FOUND TRUE)
+    endif()
+endif ()
+
+check_required_components(usbipdcpp)

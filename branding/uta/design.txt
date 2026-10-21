@@ -1,0 +1,13 @@
+Product name: UTA
+Expanded name: USB to Air
+Asset: uta-logo-concept-v1.png
+Method: built-in image_gen, new image, opaque background.
+Status: integrated into application sidebar and macOS icon.
+Production geometry: scripts/generate-icons.swift (AppKit vector paths).
+Build assets: build/branding/UTAMark.png, UTA.iconset and UTA.icns.
+App bundle: Resources/UTAMark.png, Resources/UTA.icns; CFBundleIconFile=UTA.icns.
+The full horizontal concept is retained as the design reference. Production
+icons use only its U-shaped USB/wireless mark, drawn at each native pixel size.
+
+Final prompt:
+Use case: logo-brand. Design a polished original logo presentation for a macOS developer utility named exactly "UTA", expanded name exactly "USB to Air". The software connects a local physical USB device to a remote cloud server over the network. Create ONE coherent final identity, not alternative concepts. On a warm near-white background, generous negative space, centered horizontal brand lockup: on left a distinctive geometric teal symbol; on right the word UTA in beautifully spaced dark charcoal contemporary geometric sans-serif, with smaller "USB to Air" directly below. Symbol concept: a thick continuous U-shaped rounded cable curve with a minimal USB connector terminating one upper arm, and two restrained outward airborne signal strokes emerging from the other arm; visually unify USB and wireless reach into one memorable silhouette. Very simple, balanced, confident, readable at 32px, a standalone recognizable app mark. Colors deep teal #137C77 and charcoal #202E3A, flat solid colors, crisp vector-like edges. Premium engineering-tool brand, calm and friendly, precise optical alignment. No gradients, no 3D, no shadows, no tiny circuitry, no generic cloud, no standard USB trident, no photographic mockup, no watermarks, no labels or explanation text beyond UTA and USB to Air. Wide landscape composition, one lockup only.

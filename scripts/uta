@@ -1,0 +1,18 @@
+#!/bin/sh
+# Works both from the source tree and from UTA.app/Contents/Resources.
+set -eu
+# Signed application resources must remain immutable, including in child daemons.
+export PYTHONDONTWRITEBYTECODE=1
+uta_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+if [ -f "$uta_dir/python/uta.py" ]; then
+    uta_script="$uta_dir/python/uta.py"
+else
+    uta_script="$uta_dir/../python/uta.py"
+fi
+for uta_python in /opt/homebrew/bin/python3 /usr/local/bin/python3 /usr/bin/python3; do
+    if [ -x "$uta_python" ] && "$uta_python" -c 'import sys; sys.exit(sys.version_info < (3, 9))' 2>/dev/null; then
+        exec "$uta_python" -B "$uta_script" "$@"
+    fi
+done
+echo '{"ok":false,"error":"需要 Python 3.9 或更新版本。请安装 Python 3（例如 brew install python），然后重新打开 UTA。"}'
+exit 1

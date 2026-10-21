@@ -1,0 +1,101 @@
+#include <iostream>
+
+#include "../example_utils.h"
+#include "FfmpegSource.h"
+#include "usbipdcpp/Device.h"
+#include "usbipdcpp/Server.h"
+#include "usbipdcpp/usbipdcpp_core.h"
+#include "usbipdcpp/virtual_device/UvcConstants.h"
+#include "usbipdcpp/virtual_device/UvcVirtualInterfaceHandler.h"
+
+using namespace usbipdcpp;
+
+int main(int argc, char **argv) {
+    auto opts = make_example_options("mock_uvc_ffmpeg", "USB/IP virtual UVC camera — FFmpeg video source");
+    opts.add_options()
+        ("v,video", "Video file path", cxxopts::value<std::string>()->default_value("video.mp4"))
+        ("passthrough", "Passthrough MJPEG/H264 without transcoding");
+    auto result = parse_example_args(opts, argc, argv);
+    auto port = result["port"].as<std::uint16_t>();
+    auto busid = result["busid"].as<std::string>();
+    auto video_path = result["video"].as<std::string>();
+    auto passthrough = result.count("passthrough") > 0;
+
+    spdlog::set_level(spdlog::level::trace);
+
+    StringPool string_pool;
+
+    std::vector<UsbInterface> interfaces = {
+            UsbInterface{
+                    .interface_class = CC_VIDEO,
+                    .interface_subclass = SC_VIDEOCONTROL,
+                    .interface_protocol = PC_PROTOCOL_15,
+                    .endpoints = {{UsbEndpoint{
+                            .address = 0x87,
+                            .attributes = 0x03,
+                            .max_packet_size = 16,
+                            .interval = 8,
+                    }}},
+            },
+            UsbInterface{
+                    .interface_class = CC_VIDEO,
+                    .interface_subclass = SC_VIDEOSTREAMING,
+                    .interface_protocol = PC_PROTOCOL_15,
+                    .endpoints = {{},
+                                  {UsbEndpoint{
+                                          .address = 0x81,
+                                          .attributes = static_cast<std::uint8_t>(EndpointAttributes::Isochronous) |
+                                                        static_cast<std::uint8_t>(IsoSyncType::Async),
+                                          .max_packet_size = 512,
+                                          .interval = 1,
+                                  }}},
+            },
+    };
+
+    auto device = std::make_shared<UsbDevice>(UsbDevice{
+            .path = "/usbipdcpp/mock_uvc_ffmpeg",
+            .busid = busid,
+            .bus_num = 1,
+            .dev_num = 1,
+            .speed = static_cast<std::uint32_t>(UsbSpeed::High),
+            .vendor_id = 0x1234,
+            .product_id = 0x5681,
+            .device_bcd = 0x0100,
+            .device_class = 0xEF,
+            .device_subclass = 0x02,
+            .device_protocol = 0x01,
+            .configuration_value = 1,
+            .num_configurations = 1,
+            .interfaces = interfaces,
+            .ep0_in = UsbEndpoint::get_ep0_in(UsbSpeed::High),
+            .ep0_out = UsbEndpoint::get_ep0_out(UsbSpeed::High),
+    });
+
+    auto source = std::make_unique<FfmpegSource>(video_path, passthrough);
+    // 接口从 0 连续编号：按下标依次填 interface_number（bInterfaceNumber/IAD 依赖它）
+    device->assign_interface_numbers();
+    if (auto ec = UvcDeviceHelper::setup(device, 0, string_pool, std::move(source)); ec) {
+        SPDLOG_ERROR("UVC 功能装配失败：{}", ec.message());
+        return 1;
+    }
+
+    Server server;
+    server.add_device(std::move(device));
+
+    asio::ip::tcp::endpoint endpoint{asio::ip::tcp::v4(), port};
+
+    if (auto ec = server.start(endpoint); ec) {
+        SPDLOG_ERROR("服务器启动失败：{}", ec.message());
+        return 1;
+    }
+
+    SPDLOG_INFO("Mock UVC camera (FFmpeg) started on port {}, busid {}", port, busid);
+    SPDLOG_INFO("Video: {}", video_path);
+    SPDLOG_INFO("Connect: usbip attach -r <host> -b {}", busid);
+    SPDLOG_INFO("Running... (Ctrl+C / SIGTERM / Enter to stop)");
+
+    wait_for_exit();
+
+    server.stop();
+    return 0;
+}

@@ -1,0 +1,23 @@
+build/
+dist/
+__pycache__/
+*.pyc
+.DS_Store
+.test-state/
+
+# Local credentials, device data and developer output
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.mobileprovision
+*.log
+*.bin
+*.pkg
+*.dmg
+*.zip
+*.tar.gz
+.idea/
+.vscode/

@@ -1,0 +1,511 @@
+// 具体定义可查看 https://www.kernel.org/doc/html/latest/usb/usbip_protocol.html
+
+#pragma once
+
+#include <array>
+#include <concepts>
+#include <cstdint>
+#include <system_error>
+#include <variant>
+#include <vector>
+
+#include <asio.hpp>
+
+#include "usbipdcpp/Device.h"
+#include "usbipdcpp/network.h"
+
+// 最大传输缓冲区大小（用于防止恶意大内存分配）
+#ifndef USBIPDCPP_MAX_TRANSFER_BUFFER_SIZE
+#define USBIPDCPP_MAX_TRANSFER_BUFFER_SIZE (16 * 1024 * 1024) // 16MB
+#endif
+
+// 最大等时传输包数量（用于防止恶意大内存分配）
+// 现实设备的单个 URB 等时包数量最多几十到几百，1024 上限足够宽裕
+#ifndef USBIPDCPP_MAX_ISO_PACKETS
+#define USBIPDCPP_MAX_ISO_PACKETS 1024
+#endif
+
+namespace usbipdcpp {
+constexpr std::uint16_t USBIP_VERSION = 0x0111;
+
+
+class AbstDeviceHandler; // 前向声明
+class TransferOperator; // 前向声明
+
+
+constexpr std::uint16_t OP_REQ_DEVLIST = 0x8005;
+constexpr std::uint16_t OP_REP_DEVLIST = 0x0005;
+constexpr std::uint16_t OP_REQ_IMPORT = 0x8003;
+constexpr std::uint16_t OP_REP_IMPORT = 0x0003;
+
+
+constexpr std::uint32_t USBIP_CMD_SUBMIT = 0x0001;
+constexpr std::uint32_t USBIP_CMD_UNLINK = 0x0002;
+constexpr std::uint32_t USBIP_RET_SUBMIT = 0x0003;
+constexpr std::uint32_t USBIP_RET_UNLINK = 0x0004;
+
+enum UsbIpDirection {
+    Out = 0,
+    In = 1,
+};
+
+enum class ErrorType {
+    OK = 0,
+    UNKNOWN_VERSION,
+    UNKNOWN_CMD,
+    PROTOCOL_ERROR,
+    NO_DEVICE,
+    SOCKET_EOF,
+    SOCKET_ERR,
+    INTERNAL_ERROR,
+    INVALID_ARG,
+    UNIMPLEMENTED,
+    TRANSFER_ERROR,
+};
+
+// tools/usbip_common.h
+enum class OperationStatuType {
+    // Request Completed Successfully
+    OK = 0,
+    // Request Failed
+    NA,
+    // Device busy (exported)
+    DevBusy,
+    // Device in error state
+    DevError,
+    // Device not found
+    NoDev,
+    // Unexpected response
+    Error
+};
+
+enum class UrbStatusType {
+    StatusOK = -0,
+    StatusECONNRESET = -104,
+    StatusEPIPE = -32,
+    StatusESHUTDOWN = -108,
+    StatusENODEV = -19,
+    StatusENOENT = -2,
+    StatusETIMEDOUT = -110,
+    StatusEEOVERFLOW = -75
+};
+
+class USBIPDCPP_API TransferErrorCategory : public std::error_category {
+public:
+    [[nodiscard]] const char *name() const noexcept override;
+    [[nodiscard]] std::string message(int _Errval) const override;
+};
+
+const TransferErrorCategory g_error_category;
+USBIPDCPP_API std::error_code make_error_code(ErrorType e);
+
+
+struct USBIPDCPP_API UsbIpHeaderBasic {
+    /**
+     * 这个字段并不需要从socket里面读，由子命令设置。
+     * 根据先读的字段判断应该创建哪个包
+     */
+    std::uint32_t command;
+    std::uint32_t seqnum;
+    std::uint32_t devid;
+    std::uint32_t direction;
+    /// USB/IP 线格式端点号，不带方向位：方向由 direction 字段给出，
+    /// 发送端（Linux vhci / usbip-win2）均用 usb_endpoint_num（低 4 位）。
+    /// 服务端还原真实端点地址时按 direction 补方向位（In 时 |0x80）。
+    /// 解析时校验 ep <= 0x7F，超范围按协议错误拒绝（见 UsbIpCmdSubmit::from_socket）
+    std::uint32_t ep;
+
+    [[nodiscard]] array_data_type<calculate_total_size_with_array<decltype(command), decltype(seqnum), decltype(devid),
+                                                                  decltype(direction), decltype(ep)>()>
+    to_bytes() const;
+    void from_socket(asio::ip::tcp::socket &sock);
+
+    void set_as_server() {
+        devid = 0;
+        direction = 0;
+        ep = 0;
+    }
+
+    static UsbIpHeaderBasic get_server_header(std::uint32_t command, std::uint32_t seqnum) {
+        return UsbIpHeaderBasic{.command = command, .seqnum = seqnum, .devid = 0, .direction = 0, .ep = 0};
+    }
+};
+
+static_assert(Serializable<UsbIpHeaderBasic>);
+
+
+struct USBIPDCPP_API UsbIpIsoPacketDescriptor {
+    std::uint32_t offset; ///< 本包数据在 USB 请求 buffer 中的起始位置（按 length 步进，非线上紧凑偏移）
+    std::uint32_t length; ///< 本包在 buffer 中分配的槽位大小（由客户端决定，可大于 actual_length，包间可有间隙）
+    std::uint32_t actual_length; ///< 包内有效数据的字节数（≤ length），线路上只传这部分的紧凑数据
+    std::uint32_t status; ///< 本包的传输状态（URB 状态码）
+
+    [[nodiscard]] array_data_type<calculate_total_size_with_array<decltype(offset), decltype(length),
+                                                                  decltype(actual_length), decltype(status)>()>
+    to_bytes() const;
+    void from_socket(asio::ip::tcp::socket &sock);
+};
+
+static_assert(Serializable<UsbIpIsoPacketDescriptor>);
+
+/**
+ * @brief 传输对象类型约束：能把 handle 指针取回为 TransferType*
+ *
+ * @tparam TransferType 传输对象类型（TransferHandle 持有的具体类型，
+ *          如 GenericTransfer、StorageIoTransfer）
+ * @tparam FromHandleProvider 提供静态 from_handle(void *) 返回 TransferType*
+ *          的类型。通常与 TransferType 相同（类型自身提供 from_handle），
+ *          但也可分离：如第三方 C 类型（libusb_transfer）不能添加成员函数，
+ *          from_handle 由包装类型提供。项目约定：所有自定义 transfer 类型
+ *          定义后 static_assert 此约束，防止依赖 handle 具体类型的代码
+ *          强转取回时 UB
+ */
+template <typename TransferType, typename FromHandleProvider>
+concept FromHandleTransfer = requires(void *ptr) {
+    { FromHandleProvider::from_handle(ptr) } -> std::same_as<TransferType *>;
+};
+
+// 通用传输结构，虚拟设备使用
+struct GenericTransfer {
+    std::vector<std::uint8_t> data;
+    std::vector<UsbIpIsoPacketDescriptor> iso_descriptors;
+    std::size_t actual_length = 0;
+    std::size_t data_offset = 0;
+    // 传输方向（CMD_SUBMIT 的 direction，alloc 时确定）：true=IN，数据需要回发
+    bool is_in = true;
+
+    static GenericTransfer *from_handle(void *ptr) {
+        return static_cast<GenericTransfer *>(ptr);
+    }
+};
+
+// 自定义 transfer 类型定义后按项目约定 static_assert（见 FromHandleTransfer 注释）
+static_assert(FromHandleTransfer<GenericTransfer, GenericTransfer>);
+
+/**
+ * @brief RAII 包装类，管理 transfer_handle 的生命周期
+ *
+ * 持有 handle 指针及其所属 TransferOperator，析构时自动调用
+ * op_->free_transfer_handle(handle_) 释放资源。可移动不可拷贝。
+ *
+ * 使用规则：
+ * - 构造时接管所有权：TransferHandle handle(ptr, op);
+ * - 析构时自动释放，无需手动管理
+ * - 可以通过 std::move() 转移所有权给另一个 TransferHandle
+ * - 调用 release() 会放弃所有权，调用者必须手动释放
+ *
+ * 典型用法：
+ * @code
+ *   void* ptr = op->alloc_transfer_handle(1024, 0, header, setup);
+ *   TransferHandle handle(ptr, op);  // 接管所有权
+ *   // 数据读写通过 op->send_transfer_data / op->recv_transfer_data
+ *   // 函数结束时 handle 析构，自动调用 op->free_transfer_handle(ptr)
+ * @endcode
+ */
+class USBIPDCPP_API TransferHandle {
+    void *handle_ = nullptr;
+    TransferOperator *op_ = nullptr;
+
+public:
+    TransferHandle() = default;
+
+    /**
+     * @brief 构造并接管所有权
+     * @param handle 由 op->alloc_transfer_handle() 返回的指针
+     * @param op     创建此 handle 的 TransferOperator，用于释放及后续 I/O
+     */
+    TransferHandle(void *handle, TransferOperator *op);
+
+    // 禁止拷贝（所有权唯一）
+    TransferHandle(const TransferHandle &) = delete;
+    TransferHandle &operator=(const TransferHandle &) = delete;
+
+    /**
+     * @brief 移动构造，转移所有权
+     * @param other 源对象，移动后变为空状态
+     */
+    TransferHandle(TransferHandle &&other) noexcept;
+    TransferHandle &operator=(TransferHandle &&other) noexcept;
+
+    /**
+     * @brief 析构时自动释放 handle
+     *
+     * 如果 handle_ 和 op_ 都非空，调用 op_->free_transfer_handle(handle_)
+     */
+    ~TransferHandle();
+
+    /**
+     * @brief 释放当前持有的 handle 并置空
+     *
+     * 调用 op_->free_transfer_handle(handle_)，然后将 handle_ 和 op_ 置空。
+     * 对空对象调用此函数是安全的（无操作）。
+     */
+    void reset();
+
+    /**
+     * @brief 获取原始指针（不转移所有权）
+     * @return 原始指针，可能为 nullptr
+     *
+     * 注意：返回的指针生命周期由 TransferHandle 管理，不要在外部释放。
+     */
+    [[nodiscard]] void *get() const {
+        return handle_;
+    }
+
+    /**
+     * @brief 获取创建此 handle 的 TransferOperator
+     * @return TransferOperator 指针，用于 send / recv 等 I/O 操作
+     *
+     * for_socket 中完成 alloc 后 op 指向最终的 leaf operator（如 StorageTransferOperator），
+     * 后续 I/O 操作通过此 op 直接调用，不再经过 VirtualDeviceTransferOperator 的 map 查找。
+     */
+    [[nodiscard]] TransferOperator *get_operator() const {
+        return op_;
+    }
+
+    /**
+     * @brief 检查是否持有有效 handle
+     * @return true 表示持有有效 handle
+     */
+    explicit operator bool() const {
+        return handle_ != nullptr;
+    }
+
+    /**
+     * @brief 设置路由用的 TransferOperator（from_socket 前调用）
+     *
+     * 在协议反序列化前设置路由层 op（如 VirtualDeviceTransferOperator），
+     * from_socket 内部通过 get_operator_for_ep 拿到 leaf op 后会用 set_handle 覆盖。
+     */
+    void set_operator(TransferOperator *op) {
+        op_ = op;
+    }
+
+    /**
+     * @brief 同时设置 handle 及其所属 TransferOperator
+     *
+     * from_socket 中 alloc 完成后调用，将 op 从路由层替换为最终的 leaf operator。
+     */
+    void set_handle(void *handle, TransferOperator *op) {
+        handle_ = handle;
+        op_ = op;
+    }
+
+    /**
+     * @brief 释放所有权，返回原始指针
+     * @return 原始指针，调用者必须手动释放
+     *
+     * 警告：调用此函数后，TransferHandle 不再管理该 handle，
+     * 调用者必须确保调用 op->free_transfer_handle() 释放资源，
+     * 否则会导致内存泄漏！
+     *
+     * @code
+     *   void* ptr = handle.release();
+     *   // ... 使用 ptr ...
+     *   handle.get_operator()->free_transfer_handle(ptr);  // 必须手动释放！
+     * @endcode
+     */
+    void *release();
+};
+
+namespace UsbIpCommand {
+    struct USBIPDCPP_API OpReqDevlist {
+        std::uint32_t status;
+
+        [[nodiscard]] array_data_type<
+                calculate_total_size_with_array<decltype(USBIP_VERSION), decltype(OP_REQ_DEVLIST), decltype(status)>()>
+        to_bytes() const;
+        void from_socket(asio::ip::tcp::socket &sock);
+    };
+
+    static_assert(Serializable<OpReqDevlist>);
+
+    struct USBIPDCPP_API OpReqImport {
+        std::uint32_t status;
+        array_data_type<32> busid;
+
+        [[nodiscard]] array_data_type<calculate_total_size_with_array<decltype(USBIP_VERSION), decltype(OP_REQ_IMPORT),
+                                                                      decltype(status), decltype(busid)>()>
+        to_bytes() const;
+        void to_socket(asio::ip::tcp::socket &sock, error_code &ec) const;
+        void from_socket(asio::ip::tcp::socket &sock);
+    };
+
+    static_assert(SerializableFromSocket<OpReqImport>);
+
+    struct USBIPDCPP_API UsbIpCmdSubmit {
+        UsbIpHeaderBasic header;
+        std::uint32_t transfer_flags;
+        // 表明了传输数据的最大值
+        std::uint32_t transfer_buffer_length;
+        std::uint32_t start_frame;
+        // 等时传输包数量
+        std::uint32_t number_of_packets;
+        std::uint32_t interval;
+        SetupPacket setup;
+        // IN方向transfer_buffer_length==data.size()，OUT方向IN方向transfer_buffer_length=0
+
+        // RAII 包装的 transfer_handle
+        mutable TransferHandle transfer;
+
+        void to_socket(asio::ip::tcp::socket &sock, error_code &ec) const;
+        // 这个函数只读取部分数值，后面的数据部分不读取，一个对象只能调用一次。
+        // 调用这个函数之前保证transfer已经设置了TransferOperator，不然会空指针
+        void from_socket(asio::ip::tcp::socket &sock);
+    };
+
+    static_assert(SerializableFromSocket<UsbIpCmdSubmit>);
+
+    struct USBIPDCPP_API UsbIpCmdUnlink {
+        UsbIpHeaderBasic header;
+        std::uint32_t unlink_seqnum;
+
+        [[nodiscard]] array_data_type<
+                calculate_total_size_with_array<decltype(UsbIpHeaderBasic{}.to_bytes()), decltype(unlink_seqnum)>() +
+                24>
+        to_bytes() const;
+        void to_socket(asio::ip::tcp::socket &sock, error_code &ec) const;
+        // 一个对象只能调用一次
+        void from_socket(asio::ip::tcp::socket &sock);
+    };
+
+    static_assert(SerializableFromSocket<UsbIpCmdUnlink>);
+
+    using OpCmdVariant = std::variant<OpReqDevlist, OpReqImport>;
+    using CmdVariant = std::variant<UsbIpCmdSubmit, UsbIpCmdUnlink>;
+
+
+    /**
+     * @brief 该函数只有ec有值则返回值为空，无ec则一定有值，无需二次判断
+     * @param sock
+     * @param ec
+     * @return 获取到的命令
+     */
+    USBIPDCPP_API usbipdcpp::UsbIpCommand::OpCmdVariant get_op_from_socket(asio::ip::tcp::socket &sock,
+                                                                           usbipdcpp::error_code &ec);
+
+
+    /**
+     * @brief 该函数只有ec有值则返回值为空，无ec则一定有值，无需二次判断
+     * @param sock
+     * @param handler 用于创建 transfer_handle
+     * @param ec
+     * @return 获取到的命令
+     */
+    USBIPDCPP_API usbipdcpp::UsbIpCommand::CmdVariant
+    get_cmd_from_socket(asio::ip::tcp::socket &sock, AbstDeviceHandler *handler, usbipdcpp::error_code &ec);
+} // namespace UsbIpCommand
+
+namespace UsbIpResponse {
+    struct USBIPDCPP_API OpRepDevlist {
+        std::uint32_t status;
+        std::uint32_t device_count;
+        std::vector<UsbDevice> devices;
+
+        [[nodiscard]] std::vector<std::uint8_t> to_bytes() const;
+        void to_socket(asio::ip::tcp::socket &sock, error_code &ec) const;
+        void from_socket(asio::ip::tcp::socket &sock);
+
+        static OpRepDevlist create_from_devices(const std::vector<std::shared_ptr<UsbDevice>> &devices);
+    };
+
+    static_assert(SerializableFromSocket<OpRepDevlist>);
+
+    struct USBIPDCPP_API OpRepImport {
+        std::uint32_t status;
+        std::shared_ptr<UsbDevice> device;
+
+        [[nodiscard]] std::vector<std::uint8_t> to_bytes() const;
+        void to_socket(asio::ip::tcp::socket &sock, error_code &ec) const;
+        void from_socket(asio::ip::tcp::socket &sock);
+
+        static OpRepImport create_on_failure_with_status(std::uint32_t status);
+        static OpRepImport create_on_failure();
+        /**
+         * @brief A shared pointer copy construct that shares the same pointed object
+         * @param device
+         * @return
+         */
+        static OpRepImport create_on_success(std::shared_ptr<UsbDevice> device);
+    };
+
+    static_assert(SerializableFromSocket<OpRepImport>);
+
+    struct USBIPDCPP_API UsbIpRetSubmit {
+        UsbIpHeaderBasic header;
+        std::uint32_t status;
+        std::uint32_t actual_length;
+        std::uint32_t start_frame;
+        std::uint32_t number_of_packets;
+        std::uint32_t error_count;
+
+        // RAII 包装的 transfer_handle
+        // 如果没有数据阶段（actual_length == 0），请勿赋值
+        mutable TransferHandle transfer;
+
+        void to_socket(asio::ip::tcp::socket &sock, error_code &ec) const;
+        void from_socket(asio::ip::tcp::socket &sock);
+
+        /**
+         * @brief 创建 RET_SUBMIT 响应（接管 transfer 所有权）
+         */
+        static UsbIpRetSubmit create_ret_submit(std::uint32_t seqnum, std::uint32_t status, std::uint32_t actual_length,
+                                                std::uint32_t start_frame, std::uint32_t number_of_packets,
+                                                TransferHandle transfer);
+        /**
+         * @brief 创建成功的 RET_SUBMIT 响应（无数据，不接管 transfer）
+         */
+        static UsbIpRetSubmit create_ret_submit_ok_without_data(std::uint32_t seqnum, std::uint32_t actual_length);
+
+        /**
+         * @brief 创建带状态的 RET_SUBMIT 响应（无数据，不接管 transfer）
+         */
+        static UsbIpRetSubmit create_ret_submit_with_status_and_no_data(std::uint32_t seqnum, std::uint32_t status,
+                                                                        std::uint32_t actual_length);
+        /**
+         * @brief 创建带状态的 RET_SUBMIT 响应（无等时包，接管 transfer 所有权）
+         */
+        static UsbIpRetSubmit create_ret_submit_with_status_and_no_iso(std::uint32_t seqnum, std::uint32_t status,
+                                                                       std::uint32_t actual_length,
+                                                                       TransferHandle transfer);
+        /**
+         * @brief 创建 EPIPE 状态的 RET_SUBMIT 响应（接管 transfer 所有权）
+         */
+        static UsbIpRetSubmit create_ret_submit_epipe_no_iso(std::uint32_t seqnum, std::uint32_t actual_length,
+                                                             TransferHandle transfer);
+        /**
+         * @brief 创建 EPIPE 状态的 RET_SUBMIT 响应（无数据，不接管 transfer）
+         */
+        static UsbIpRetSubmit create_ret_submit_epipe_without_data(std::uint32_t seqnum, std::uint32_t actual_length);
+        /**
+         * @brief 创建成功的 RET_SUBMIT 响应（无等时包，接管 transfer 所有权）
+         */
+        static UsbIpRetSubmit create_ret_submit_ok_with_no_iso(std::uint32_t seqnum, std::uint32_t actual_length,
+                                                               TransferHandle transfer);
+    };
+
+    static_assert(SerializableFromSocket<UsbIpRetSubmit>);
+
+    struct USBIPDCPP_API UsbIpRetUnlink {
+        UsbIpHeaderBasic header;
+        std::uint32_t status;
+
+        [[nodiscard]] array_data_type<
+                calculate_total_size_with_array<decltype(UsbIpHeaderBasic{}.to_bytes()), decltype(status)>() + 24>
+        to_bytes() const;
+        void to_socket(asio::ip::tcp::socket &sock, error_code &ec) const;
+        void from_socket(asio::ip::tcp::socket &sock);
+
+        static UsbIpRetUnlink create_ret_unlink(std::uint32_t seqnum, std::uint32_t status);
+        static UsbIpRetUnlink create_ret_unlink_success(std::uint32_t seqnum);
+    };
+
+    static_assert(SerializableFromSocket<UsbIpRetUnlink>);
+
+    using OpRepVariant = std::variant<OpRepDevlist, OpRepImport>;
+    using RetVariant = std::variant<UsbIpRetSubmit, UsbIpRetUnlink>;
+    using AllRepVariant = std::variant<OpRepDevlist, OpRepImport, UsbIpRetSubmit, UsbIpRetUnlink>;
+} // namespace UsbIpResponse
+
+
+} // namespace usbipdcpp

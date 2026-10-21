@@ -1,0 +1,179 @@
+#include <asio.hpp>
+#include <iostream>
+#include <libusb-1.0/libusb.h>
+#include <spdlog/spdlog.h>
+#include "../example_utils.h"
+
+#include "usbipdcpp/LibusbHandler/LibusbServer.h"
+
+using namespace usbipdcpp;
+
+#ifndef _WIN32
+#include <csignal>
+#include <signal.h>
+#include <unistd.h>
+
+void run_daemon_mode(LibusbServer &libusb_server) {
+    SPDLOG_INFO("Daemon 模式：自动绑定所有设备...");
+    libusb_server.bind_existing_devices();
+
+    sigset_t mask;
+    sigemptyset(&mask);
+    sigaddset(&mask, SIGINT);
+    sigaddset(&mask, SIGTERM);
+    sigprocmask(SIG_BLOCK, &mask, nullptr);
+
+    if (!isatty(STDIN_FILENO)) {
+        SPDLOG_INFO("Daemon 运行中（无 TTY），等待信号...");
+        int sig;
+        sigwait(&mask, &sig);
+        SPDLOG_INFO("收到信号 {}，正在退出...", sig);
+    }
+    else {
+        SPDLOG_INFO("Daemon 运行中，按 Ctrl+C 退出...");
+        pause();
+    }
+
+    libusb_server.stop();
+}
+#endif
+
+void run_interactive_loop(LibusbServer &libusb_server) {
+    char cmd;
+    while (true) {
+        std::cin >> cmd;
+        switch (cmd) {
+            case 's': {
+                spdlog::info("There are {} sessions in this server", libusb_server.get_server().get_session_count());
+                break;
+            }
+            case 'l': {
+                spdlog::info("List all usb devices in the host");
+                libusb_server.list_host_devices();
+                break;
+            }
+            case 'd': {
+                libusb_server.get_server().print_bound_devices();
+                break;
+            }
+            case 'b': {
+                spdlog::info("Binding device");
+                std::string target_busid;
+                std::cin >> target_busid;
+                auto device = LibusbServer::find_by_busid(target_busid);
+                if (device) {
+                    libusb_server.bind_host_device(device);
+                }
+                else {
+                    spdlog::warn("Can't find a device with busid {}", target_busid);
+                }
+                break;
+            }
+            case 'u': {
+                spdlog::info("Unbinding device");
+                std::string target_busid;
+                std::cin >> target_busid;
+                auto device = LibusbServer::find_by_busid(target_busid);
+                if (device) {
+                    libusb_server.unbind_host_device(device);
+                }
+                // 主机上找不到，这个设备，如果还处于绑定状态但找不到则需要清除这个设备
+                else if (libusb_server.get_server().has_bound_device(target_busid)) {
+                    spdlog::warn("Can't find target busid {} in server, but it has been bound."
+                                 "Has it been removed?",
+                                 target_busid);
+                    spdlog::warn("Try remove dead device:{}", target_busid);
+                    libusb_server.try_remove_dead_device(target_busid);
+                }
+                else {
+                    spdlog::warn("Can't find a device with busid {}", target_busid);
+                }
+                break;
+            }
+            case 'q': {
+                spdlog::info("Trying to close server");
+                libusb_server.stop();
+                spdlog::info("Closed server successfully");
+                return;
+                break;
+            }
+
+            default: {
+                spdlog::warn("Unknown command {}", cmd);
+            }
+            case 'h': {
+                std::cout << R"(
+h : Print this help information.
+s : show how many sessions the server has.
+l : List all usb devices in the host.
+d : Show all bound devices.
+b busid : Try to bind a device.
+u busid : Try to unbind a device.
+q : Close the server.)" << std::endl;
+                break;
+            }
+        }
+    }
+}
+
+int main(int argc, char **argv) {
+    auto opts = make_example_options("libusb_server", "USB/IP libusb server");
+#ifndef _WIN32
+    opts.add_options()("d,daemon", "以 daemon 模式运行：自动绑定所有设备并等待信号退出");
+#endif
+    auto result = parse_example_args(opts, argc, argv);
+    auto port = result["port"].as<std::uint16_t>();
+
+#ifndef _WIN32
+    const bool daemon_mode = result.count("daemon") > 0;
+#else
+    const bool daemon_mode = false;
+#endif
+
+    spdlog::set_level(spdlog::level::trace);
+
+    // 启用 libusb 调试日志
+    // libusb_set_option(nullptr, LIBUSB_OPTION_LOG_LEVEL, LIBUSB_LOG_LEVEL_DEBUG);
+    int err = libusb_init(nullptr);
+    if (err) {
+        SPDLOG_ERROR("libusb_init failed: {}", libusb_strerror(err));
+        libusb_exit(nullptr);
+        return 1;
+    }
+
+    LibusbServerConfig server_config;
+    if (daemon_mode) {
+        server_config.auto_bind_hotplug = true;
+    }
+    LibusbServer libusb_server(server_config);
+
+    asio::ip::tcp::endpoint endpoint(asio::ip::tcp::v4(), port);
+    if (auto ec = libusb_server.start(endpoint); ec) {
+        SPDLOG_ERROR("服务器启动失败：{}", ec.message());
+        return 1;
+    }
+
+    // SPDLOG_DEBUG("直接绑定3-5-1");
+    // server.bind_host_device(server.find_by_busid("3-5-1"));
+    // auto target_busid = "1-1";
+    // SPDLOG_DEBUG("直接绑定1-1");
+    // auto found = LibusbServer::find_by_busid("1-1");
+    // if (found) {
+    //     server.bind_host_device(found);
+    // }
+    // else {
+    //     SPDLOG_ERROR("不存在设备{}", target_busid);
+    // }
+    if (daemon_mode) {
+#ifndef _WIN32
+        run_daemon_mode(libusb_server);
+#endif
+    }
+    else {
+        run_interactive_loop(libusb_server);
+    }
+
+
+    libusb_exit(nullptr);
+    return 0;
+}

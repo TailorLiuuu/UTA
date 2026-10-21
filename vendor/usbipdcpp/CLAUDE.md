@@ -1,0 +1,119 @@
+协议解析部分的修改请务必慎重，这部分是调试很久的结果，其他架构部分可以修改。
+
+解析/构造协议字段（USB 描述符、以太网/IP/TCP 头等）时用 packed 结构体 + 命名成员字段访问，
+禁止用 std::vector、std::array + 手算字节偏移读写（偏移极易算错、字段增删时无法自动发现错误）。
+多字节字段按网络序存内存，访问时用 bswap/htons 类函数显式转换。
+
+## 测试汇总查看
+
+跑 ctest 必须一条命令看到通过/失败数，禁止跑两遍：输出 tail 至少留 15 行
+（汇总行 `100% tests passed out of N` 在输出最后两行，tail 太短会把汇总
+截掉，还得再跑一次）：
+
+```bash
+ctest --test-dir build --output-on-failure -j12 2>&1 | tail -15
+```
+
+## 注释风格
+
+函数/方法/结构体的文档注释一律用 Doxygen 风格（`/** ... */`，@brief 简述 +
+@param 参数说明 + @return 返回值说明），格式对齐 InterfaceHandler.h 的
+AbstInterfaceHandler::on_new_connection：
+
+```cpp
+    /**
+     * @brief 新的客户端连接时会调这个函数
+     * @param responder 传输应答接口（提交应答/停止传输用）
+     * @param ec 发生的ec
+     */
+```
+
+禁止用 `///` 或 `//` 给函数/方法/结构体写文档（行内注释说明"为什么"不受限）。
+
+## spdlog 日志级别被编译期裁剪时的调试手法
+
+Release/RelWithDebInfo 构建下 SPDLOG_ACTIVE_LEVEL 编译期定为 INFO，TRACE/DEBUG 日志
+打不出来（spdlog::set_level 运行时设置无效）。需要看某个文件的 TRACE/DEBUG 日志时，
+**不要逐行把日志级别改高**，参照 Session.cpp 顶部的方式：在该 cpp 文件最顶部
+（include 之前）强制重定义宏，让本文件日志全量输出，调试完删除：
+
+```cpp
+// 调试用：<这里写为什么要开，排查完删除>
+#ifdef SPDLOG_ACTIVE_LEVEL
+    #undef SPDLOG_ACTIVE_LEVEL
+#endif
+#define SPDLOG_ACTIVE_LEVEL SPDLOG_LEVEL_TRACE
+```
+
+改各种api时需要考虑这种嵌入式平台的实现难易度
+
+这个项目的开源协议是lgpl，别搞混了
+
+别主动提交git，我叫你提交再提交
+
+成员变量末尾不要加"_"
+
+push前先提交代码，push和提交请分别执行不要放在一起
+
+有新版本tag的时候别忘记更新CMakeLists.txt里的版本号
+
+所有编译出来的二进制（examples 的 mock_*、tests 的 test_* 等）一律在编译目录根目录（build* 下），不在任何子目录，别搞错了
+
+## git 工作流
+
+单 main 分支模型（develop 已删除）：
+
+- 日常提交直接进 main
+- 大的实验性功能：开临时 feature 分支开发，完成后合并回 main 并删除
+- 外部贡献者：fork + PR 到 main
+- 发版本：先更新 CMakeLists.txt 里的版本号并提交推送，再打 v* tag 推送，CI 自动构建发布包
+
+## usbip命令使用
+
+假设有个usbip服务器在本机的53240端口监听，请你attach或者list时使用
+`usbip -t 53240 attach/list ...`这种命令，注意-t必须紧跟usbip的后面，
+处于attach list等所有子命令的前面
+
+**usbip 的 attach 必须用 sudo**：attach 要写 /sys 并移交 fd 给 vhci_hcd，
+WSL 默认用户非 root 时权限不足会报 `usbip: error: import device`（极易误判成
+服务器/协议问题）。list 只读不需要 sudo，但为统一可直接
+`sudo usbip -t 53240 ...`。验证导入状态用 `sudo usbip port`。
+
+**Windows 的 usbip.exe 与 Linux usbip 工具命令完全一样**：-t/--tcp-port 是
+两者共同的顶层全局选项（紧跟 usbip 之后、所有子命令之前），Windows 与 Linux
+的 attach/list/port 语法一一对应。Windows 侧连非 3240 端口服务器的命令就是
+`usbip -t 53240 list -r <ip>` / `usbip -t 53240 attach -r <ip> -b 1-1`，
+不要因为 attach 子命令帮助里 -t 显示为 --terse 就以为不支持端口
+（--terse 是 attach 子命令自己的短选项，顶层 -t 才是端口，看 `usbip --help`
+的顶层 OPTIONS）。Linux 中导入 Windows 侧导出的设备（usbipd-win）写法与此
+完全相同：`usbip -t <端口> attach -r <Windows 主机 ip> -b <busid>`。
+
+## mock 设备本地验证的坑
+
+在 WSL 里起 mock 服务器并 attach 验证时，注意：
+
+- **启动**：mock 服务器（wait_for_exit）等退出信号（POSIX：SIGINT/SIGTERM；
+  Windows：控制台事件），后台运行不需要挂 stdin。直接
+  `setsid ./mock_xxx -p 53240 < /dev/null > log 2>&1 &`
+- **关闭**：`kill -TERM <pid>` 或 `pkill -x mock_xxx`（都是 SIGTERM），
+  服务器走正常清理路径（server.stop：关连接、释放端口）优雅退出。
+  退出后 `ss -tln | grep 53240` 确认端口释放（端口被占会导致下一个
+  服务器起不来，误 attach 到旧设备上）
+- **清理旧进程时禁用 `pkill -f mock_xxx`**：`-f` 按整条命令行匹配，
+  会把自己的 shell（bash -lc 命令串里含 "mock_xxx"）杀掉。改用精确
+  进程名 `pkill -x mock_xxx`（可执行名，不含路径/参数）
+- **进程名超 15 字符会被内核截断**（Linux comm 上限）：`pkill -x` 匹配的
+  是截断后的名字，如 `mock_cdc_throttle`→`mock_cdc_thrott`、
+  `multi_interface_hid`→`multi_interface`、`multi_devices` 恰好 13 字符不截断。
+  杀不掉时先 `ps -eo comm | grep -i mock` 看真实 comm 名再用 `pkill -x <真实名>`
+
+**MSC（U盘）块设备读写必须分步，禁止一条命令里混查询和写**：
+attach 后先单独确认新出现的块设备是哪个（如 attach 前后 `lsblk` 对比、
+`dmesg | tail` 看内核枚举的 sdX 名），确认无误后**再单独执行**读写命令。
+严禁 `lsblk ... && dd if=/dev/sdX ...` 这类"查设备 + 写设备"一条命令
+串联——WSL 里还有其他物理硬盘，写错盘符会毁数据
+
+**evtest 定位设备用 `/dev/input/by-path/`**：WSL 的 devtmpfs 下 `/dev/input/eventX`
+节点号与 `/sys/class/input/inputX` 编号不一定一致（容易拿错节点），by-path 的
+符号链接才对应真实设备（如 `platform-vhci_hcd.0-usb-0:1:1.0-event-kbd -> ../event0`）。
+先 `ls /dev/input/by-path/` 找目标设备名，再 `sudo evtest /dev/input/by-path/<名字>`。

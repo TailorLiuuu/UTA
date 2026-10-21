@@ -1,0 +1,219 @@
+# 发布预编译二进制到 GitHub Release
+# 触发：推送 v* 标签（如 v1.0.4）
+# 产出：linux-x64 / linux-aarch64 / macos-arm64 / win-x64 动态库 tar.gz 包
+
+name: Release
+
+on:
+  push:
+    tags: [ "v*" ]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "构建完成后是否发布到 Release（tag 触发总是发布；手动触发默认不发布，产物从 artifact 下载）"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux-x64,      os: ubuntu-24.04 }
+          - { name: linux-aarch64,  os: ubuntu-24.04-arm }
+          - { name: macos-arm64,    os: macos-latest }
+          - { name: win-x64,        os: windows-latest }
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ======== 依赖 ========
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasio-dev libspdlog-dev libusb-1.0-0-dev libcxxopts-dev libevdev-dev libavformat-dev libavcodec-dev libswscale-dev libavutil-dev libgtest-dev libminiaudio-dev
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install asio spdlog libusb cxxopts ffmpeg googletest miniaudio
+
+      - name: Setup FFmpeg (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ffmpegUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-lgpl-shared.zip"
+          Write-Host "=== Downloading: $ffmpegUrl ==="
+          Invoke-WebRequest -Uri $ffmpegUrl -OutFile ffmpeg.zip
+          Write-Host "=== Extracting ==="
+          Expand-Archive -Path ffmpeg.zip -DestinationPath .
+          $ffmpegDir = Get-ChildItem -Directory -Name "ffmpeg-*" | Select-Object -First 1
+          if (-not $ffmpegDir) { Write-Error "ffmpeg extraction failed"; exit 1 }
+          $ffmpegPath = (Resolve-Path $ffmpegDir).ToString().Replace('\', '/')
+          Write-Host "FFMPEG_DIR=$ffmpegPath"
+          Write-Host "=== Contents of lib/pkgconfig ==="
+          Get-ChildItem "$ffmpegDir/lib/pkgconfig/"
+          Write-Host "=== Setting env vars ==="
+          "FFMPEG_DIR=$ffmpegPath" >> $env:GITHUB_ENV
+          "PKG_CONFIG_PATH=$ffmpegPath/lib/pkgconfig" >> $env:GITHUB_ENV
+          "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\tools\pkgconf" >> $env:GITHUB_PATH
+
+      - name: Install dependencies (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          vcpkg install asio spdlog libusb cxxopts pkgconf gtest miniaudio --triplet x64-windows
+
+      # ======== CMake 配置 ========
+
+      - name: Configure CMake (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DUSBIPDCPP_USE_PKGCONF_ASIO=ON \
+            -DUSBIPDCPP_BUILD_SHARED_LIBS=ON \
+            -DUSBIPDCPP_BUILD_VIRTUAL_DEVICE=ON \
+            -DUSBIPDCPP_BUILD_LIBUSB_COMPONENTS=ON \
+            -DUSBIPDCPP_BUILD_EXAMPLES=ON \
+            -DUSBIPDCPP_INSTALL_EXAMPLES=ON \
+            -DUSBIPDCPP_BUILD_TESTS=ON \
+            -S ${{ github.workspace }}
+
+      - name: Configure CMake (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$(brew --prefix)" \
+            -DUSBIPDCPP_USE_PKGCONF_ASIO=ON \
+            -DUSBIPDCPP_BUILD_SHARED_LIBS=ON \
+            -DUSBIPDCPP_BUILD_VIRTUAL_DEVICE=ON \
+            -DUSBIPDCPP_BUILD_LIBUSB_COMPONENTS=ON \
+            -DUSBIPDCPP_BUILD_EXAMPLES=ON \
+            -DUSBIPDCPP_INSTALL_EXAMPLES=ON \
+            -DUSBIPDCPP_BUILD_TESTS=ON \
+            -S ${{ github.workspace }}
+
+      - name: Debug pkg-config (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Write-Host "PKG_CONFIG_PATH=$env:PKG_CONFIG_PATH"
+          Write-Host "PATH pkgconf check:"
+          Get-Command pkgconf -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
+          Get-Command pkg-config -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
+          Write-Host "pkgconf search path:"
+          pkgconf --variable pc_path pkg-config 2>$null
+          Write-Host "Testing libavcodec:"
+          pkgconf --modversion libavcodec 2>&1
+
+      - name: Configure CMake (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cmake -B build `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DUSBIPDCPP_BUILD_SHARED_LIBS=ON `
+            -DUSBIPDCPP_BUILD_VIRTUAL_DEVICE=ON `
+            -DUSBIPDCPP_BUILD_LIBUSB_COMPONENTS=ON `
+            -DUSBIPDCPP_BUILD_EXAMPLES=ON `
+            -DUSBIPDCPP_INSTALL_EXAMPLES=ON `
+            -DUSBIPDCPP_BUILD_TESTS=ON `
+            -S ${{ github.workspace }}
+
+      # ======== 编译 + 测试 + 安装 ========
+
+      # ubuntu runner 只有 2 核且内存小：并行编译时 miniaudio/fmt 等大头文件
+      # 同时展开，内存峰值超限被内核 OOM 杀（实测 g++: fatal error: Killed +
+      # exit 143，与 cmake-multi-platform.yml 同因），Linux 限 1 并发
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        run: cmake --build build --config Release --parallel 1
+
+      # macOS/Windows 编译器内存占用低，不限制（用满 runner 核数）
+      - name: Build
+        if: runner.os != 'Linux'
+        run: cmake --build build --config Release --parallel
+
+      - name: Test
+        working-directory: build
+        run: ctest --build-config Release
+
+      - name: Install & package
+        shell: bash
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          DIRNAME="usbipdcpp-${VERSION}-${{ matrix.name }}"
+          cmake --install build --config Release --prefix "${DIRNAME}"
+          # 复制 BtbN ffmpeg DLL 到安装目录（Windows）
+          [ -n "$FFMPEG_DIR" ] && cp "$FFMPEG_DIR"/bin/*.dll "${DIRNAME}/bin/"
+          tar czf "${DIRNAME}.tar.gz" "${DIRNAME}"
+          echo "archive=${DIRNAME}.tar.gz" >> $GITHUB_ENV
+
+      - name: Verify installed DLLs (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          DIRNAME="usbipdcpp-${VERSION}-${{ matrix.name }}"
+
+          # 下载 wldd（Windows 上的 ldd 等价工具）
+          curl -sL "https://github.com/marcoesposito1988/dependency_runner/releases/download/v1.5.0/wldd-x86_64-pc-windows-msvc.zip" -o wldd.zip
+          unzip -q wldd.zip
+
+          # 验证安装目录中每个 DLL 和 exe 的依赖是否完整
+          echo "=== 检查已安装 DLL 的依赖完整性 ==="
+          find "${DIRNAME}/bin" -type f \( -name "*.dll" -o -name "*.exe" \) -print0 > /tmp/files.txt
+          while IFS= read -r -d '' file; do
+            echo "--- $(basename "$file") ---"
+            ./wldd.exe "$file" 2>&1
+          done < /tmp/files.txt > /tmp/wldd_out.txt
+          if grep -qiE "(not found|missing|could not)" /tmp/wldd_out.txt; then
+            echo "存在未解析的 DLL 依赖！"
+            grep -iE "(not found|missing|could not)" /tmp/wldd_out.txt
+            exit 1
+          fi
+          echo "所有 DLL 依赖验证通过"
+
+      # ======== 上传 artifact（所有平台建完后统一发到 Release） ========
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ env.archive }}
+          if-no-files-found: error
+
+  # 等待所有平台都成功后再统一上传到 Release。
+  # tag 触发（push）总是发布；手动触发由 publish 输入控制（默认不发布）
+  release-upload:
+    needs: [ release ]
+    if: ${{ github.event_name == 'push' || inputs.publish }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*.tar.gz
+          generate_release_notes: true
+          # 默认以 pre-release 发布，人工验证后再转正式
+          prerelease: true
