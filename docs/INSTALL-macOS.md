@@ -1,6 +1,6 @@
 # UTA Mac 预览版安装指南
 
-下载：https://github.com/TailorLiuuu/UTA/releases/tag/v0.1.0-preview.2
+下载：https://github.com/TailorLiuuu/UTA/releases/tag/v0.1.0-preview.3
 
 ## 安装前确认
 
@@ -56,7 +56,9 @@ Linux 服务器：
 
 ## 升级与卸载
 
-升级前先断开所有设备、停止 UTA 后台服务并退出界面，再替换 App。
+Build 15 起可在侧栏或 UTA 菜单点击“检查更新”，或开启“自动检查更新”接收提示。
+先断开 USB 并等待云端清理完成，再在更新窗口下载、安装并重启。
+Preview 2 及更早版本需要手动安装一次新版：断开所有设备、停止 UTA 后台服务并退出界面，再替换 App。
 若升级后辅助服务检查提示版本不匹配，先停用，再重新启用并完成系统批准。
 不要同时运行来自磁盘映像、下载目录和“应用程序”的多个副本。
 

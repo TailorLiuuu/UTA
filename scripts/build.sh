@@ -18,6 +18,7 @@ fi
 uta_root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$uta_root"
 mkdir -p build dist
+bash scripts/fetch-sparkle.sh
 cp python/uta_server.py dist/uta-server
 swift -module-cache-path "$uta_root/build/swift-cache" scripts/generate-icons.swift "$uta_root/build/branding"
 iconutil -c icns "$uta_root/build/branding/UTA.iconset" -o "$uta_root/build/branding/UTA.icns"
@@ -29,9 +30,12 @@ stage=$(mktemp -d /private/tmp/uta-build.XXXXXX)
 app="$stage/UTA.app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/bin" "$app/Contents/Resources/python"
 mkdir -p "$app/Contents/Resources/docs" "$app/Contents/Resources/licenses"
+mkdir -p "$app/Contents/Frameworks"
+ditto --norsrc build/sparkle/Sparkle.framework "$app/Contents/Frameworks/Sparkle.framework"
 swiftc -swift-version 5 -parse-as-library -O \
     -module-cache-path "$uta_root/build/swift-cache" \
-    macos/UTA.swift macos/USBPermission.swift macos/USBHelperProtocol.swift -o "$app/Contents/MacOS/UTA"
+    -F "$app/Contents/Frameworks" -framework Sparkle -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
+    macos/UTA.swift macos/AppUpdate.swift macos/USBPermission.swift macos/USBHelperProtocol.swift -o "$app/Contents/MacOS/UTA"
 swiftc -swift-version 5 -parse-as-library -O \
     -module-cache-path "$uta_root/build/swift-cache" \
     macos/USBHelperClient.swift macos/USBHelperProtocol.swift -o "$app/Contents/Resources/bin/uta-helper-client"
@@ -84,6 +88,7 @@ cp THIRD_PARTY.md "$app/Contents/Resources/licenses/"
 cp vendor/usbipdcpp/LICENSE "$app/Contents/Resources/licenses/usbipdcpp-LGPL-3.0.txt"
 cp vendor/ASIO_LICENSE.txt vendor/SPDLOG_LICENSE.txt "$app/Contents/Resources/licenses/"
 cp vendor/LIBUSB_LICENSE.txt "$app/Contents/Resources/licenses/"
+cp build/sparkle/LICENSE "$app/Contents/Resources/licenses/SPARKLE_LICENSE.txt"
 cat > "$app/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -95,13 +100,23 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 <key>CFBundleIconFile</key><string>UTA.icns</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>0.1.0</string>
-<key>CFBundleVersion</key><string>14</string>
+<key>CFBundleVersion</key><string>15</string>
+<key>SUFeedURL</key><string>https://raw.githubusercontent.com/TailorLiuuu/UTA/main/updates/appcast.xml</string>
+<key>SUPublicEDKey</key><string>g3/FZ0EjxEXSqXyo63ga3J5mdkJuuOJm2G/rSGXslsc=</string>
+<key>SUEnableAutomaticChecks</key><true/>
+<key>SUAutomaticallyUpdate</key><false/>
+<key>SUAllowsAutomaticUpdates</key><false/>
+<key>SUSendProfileInfo</key><false/>
 <key>LSMinimumSystemVersion</key><string>26.0</string>
 <key>NSHighResolutionCapable</key><true/>
 </dict></plist>
 PLIST
 chmod +x "$app/Contents/Resources/uta" "$app/Contents/Resources/bin/uta-native"
 xattr -cr "$app"
+sparkle="$app/Contents/Frameworks/Sparkle.framework/Versions/B"
+for component in "$sparkle/XPCServices/Downloader.xpc" "$sparkle/XPCServices/Installer.xpc" "$sparkle/Autoupdate" "$sparkle/Updater.app" "$app/Contents/Frameworks/Sparkle.framework"; do
+    codesign --force --sign "$uta_sign_identity" --options runtime --preserve-metadata=entitlements "$uta_timestamp_flag" "$component"
+done
 for binary in "$app/Contents/Resources/bin/"*; do
     # The helper pins this exact client's signature; never re-sign it afterwards.
     if [ "$(basename "$binary")" != "uta-helper-client" ]; then codesign --force --sign "$uta_sign_identity" --options runtime "$uta_timestamp_flag" "$binary"; fi

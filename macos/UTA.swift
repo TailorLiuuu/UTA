@@ -220,6 +220,7 @@ struct Envelope: Decodable {
     @Published var loading = true
     @Published var selected: String?
     private var refreshing = false
+    var suspendedForUpdate = false
 
     static func execute(_ json: String) async throws -> Data {
         let resource = Bundle.main.resourceURL!
@@ -250,7 +251,7 @@ struct Envelope: Decodable {
     }
 
     func refresh() async {
-        guard !refreshing else { return }
+        guard !refreshing, !suspendedForUpdate else { return }
         refreshing = true
         defer { refreshing = false; loading = false }
         do {
@@ -268,6 +269,7 @@ struct Envelope: Decodable {
     }
 
     @discardableResult func call(_ object: [String: Any]) async -> Bool {
+        guard !suspendedForUpdate else { return false }
         do {
             let text = String(data: try JSONSerialization.data(withJSONObject: object), encoding: .utf8)!
             let data = try await Self.execute(text)
@@ -281,6 +283,10 @@ struct Envelope: Decodable {
         } catch { self.error = error.localizedDescription; return false }
     }
     func session(_ device: Device) -> Session? { state.sessions.first { $0.busid == device.busid } }
+    func quiesceForUpdate() async {
+        suspendedForUpdate = true
+        while refreshing { try? await Task.sleep(for: .milliseconds(50)) }
+    }
     func host(_ id: String) -> Host? { state.servers.first { $0.id == id } }
 }
 
@@ -724,6 +730,7 @@ struct ManualInstallView: View {
 
 struct ContentView: View {
     @EnvironmentObject var model: Model
+    @EnvironmentObject var updater: AppUpdate
     @State private var editor = false
     @State private var editing: Host?
     @State private var help = false
@@ -819,6 +826,7 @@ struct ContentView: View {
             }.background(Color(red: 0.965, green: 0.973, blue: 0.976))
         }
         .frame(minWidth: 1000, minHeight: 660)
+        .disabled(updater.checking || model.suspendedForUpdate)
         .preferredColorScheme(.light)
         .sheet(isPresented: $editor) { HostEditor(host: nil).environmentObject(model) }
         .sheet(item: $editing) { host in HostEditor(host: host).environmentObject(model) }
@@ -915,6 +923,7 @@ struct ContentView: View {
                     .font(.system(size: 12)).foregroundStyle(muted).lineSpacing(5).padding(.horizontal, 24)
             }
             Spacer()
+            AppUpdateView()
             Button { help = true } label: {
                 Label("连接指南与 CLI", systemImage: "questionmark.circle")
                     .font(.system(size: 12)).foregroundStyle(muted)
@@ -1087,13 +1096,18 @@ struct ContentView: View {
 }
 
 @main struct UTAApp: App {
+    @NSApplicationDelegateAdaptor(UTAApplicationDelegate.self) var appDelegate
     @StateObject var model = Model()
+    @StateObject var updater = AppUpdate()
     var body: some Scene {
         WindowGroup("UTA") {
-            ContentView().environmentObject(model)
+            ContentView().environmentObject(model).environmentObject(updater)
+                .task { appDelegate.update = updater; updater.start(model: model) }
         }.defaultSize(width: 1080, height: 740)
         .commands {
             CommandGroup(after: .appInfo) {
+                Button("检查更新…") { updater.check() }.disabled(!updater.canCheck)
+                Divider()
                 Button("停止 UTA 后台服务") {
                     Task {
                         _ = await model.call(["action": "shutdown"])

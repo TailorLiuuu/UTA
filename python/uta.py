@@ -286,6 +286,7 @@ class Controller:
         self.checks = {}
         self.processes = {}
         self.busy = set()
+        self.update_owner = None
         self.stopping = threading.Event()
         self.last_monitor = 0.0
         self.diagnostics = {}
@@ -325,6 +326,8 @@ class Controller:
 
     def background(self, key, task):
         with self.lock:
+            if self.stopping.is_set() or self.update_reserved():
+                raise RuntimeError("UTA 正在更新，请完成或取消更新后再操作")
             if key in self.busy:
                 raise RuntimeError("该设备/服务器正在执行操作，请稍候")
             self.busy.add(key)
@@ -687,8 +690,42 @@ class Controller:
             self.retry_reconnect()
             self.stopping.wait(3)
 
+    def update_reserved(self):
+        if self.update_owner:
+            try:
+                os.kill(self.update_owner, 0)
+            except ProcessLookupError:
+                self.update_owner = None
+        return self.update_owner is not None
+
+    def prepare_update(self, owner):
+        if not isinstance(owner, int) or isinstance(owner, bool) or owner <= 1:
+            raise ValueError("Invalid updater process")
+        os.kill(owner, 0)
+        if self.update_reserved() and self.update_owner != owner:
+            raise RuntimeError("另一个 UTA 窗口正在更新")
+        if self.busy or self.processes or any(
+                s["state"] in ACTIVE | {"disconnecting"} or s.get("remote_cleanup_pending")
+                or s.get("reconnect_deadline", 0) > time.time() for s in self.sessions.values()):
+            raise RuntimeError("请先断开 USB，取消等待重连，并等待云端清理完成后再更新")
+        self.update_owner = owner
+
     def handle(self, request):
         action = request.get("action")
+        with self.lock:
+            if action in ("update_prepare", "update_cancel", "update_shutdown"):
+                owner = request.get("pid")
+                if action == "update_cancel":
+                    if self.update_owner == owner:
+                        self.update_owner = None
+                    return {}
+                self.prepare_update(owner)
+                if action == "update_shutdown":
+                    self.stopping.set()
+                    threading.Timer(0.2, lambda: os.kill(os.getpid(), signal.SIGTERM)).start()
+                return dict(pid=os.getpid())
+            if self.update_reserved() and action not in ("snapshot", "permission_status", "diagnose"):
+                raise RuntimeError("UTA 正在更新，请完成或取消更新后再操作")
         if action == "snapshot":
             return self.snapshot()
         if action == "ssh_hosts":

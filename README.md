@@ -6,14 +6,14 @@ UTA 将 Mac 上选定的真实 USB 设备，通过 SSH 接入远程 Linux 服务
 服务器上的工具直接使用虚拟 USB 和对应串口，固件与编译环境留在服务器，
 无需来回下载文件到本机烧录。
 
-**当前状态：0.1 实验原型，build 14（Preview 2）。** 已完成部分开发板实机验证，尚未完成通用 USB
+**当前状态：0.1 实验原型，build 15（Preview 3）。** 已完成部分开发板实机验证，尚未完成通用 USB
 兼容性验收。当前支持 **macOS Apple Silicon → Linux**，没有 Windows 或 iOS 客户端。
 提供预编译安装包与源码。预览版已签名，但尚未经过 Apple 公证。
 
 ## 下载 Mac 预览版
 
-**[下载 DMG 安装包](https://github.com/TailorLiuuu/UTA/releases/download/v0.1.0-preview.2/UTA-0.1.0-macOS-arm64.dmg)** ·
-[Release 与 ZIP 备用包](https://github.com/TailorLiuuu/UTA/releases/tag/v0.1.0-preview.2) ·
+**[下载 DMG 安装包](https://github.com/TailorLiuuu/UTA/releases/download/v0.1.0-preview.3/UTA-0.1.0-macOS-arm64.dmg)** ·
+[Release 与 ZIP 备用包](https://github.com/TailorLiuuu/UTA/releases/tag/v0.1.0-preview.3) ·
 [首次安装指南](docs/INSTALL-macOS.md)
 
 适用于 Apple Silicon / macOS 26，需另行安装 Python 3.9+。打开 DMG，将 UTA 拖入
@@ -211,6 +211,12 @@ UTA 不会重放结果未知的写入命令，也不会自动继续中断的烧�
 云端仍需设备对应的驱动和工具；Windows 专用烧录器不能直接在 Linux 上运行。
 同一设备只能被一个目标独占使用。本工具不是为互不信任租户设计的安全隔离系统。
 
+## App 内更新
+
+侧栏和 UTA 菜单提供「检查更新」。开启「自动检查更新」后会提示新版，
+点击下载安装，再重启即可。USB 正在使用、等待重连或清理时会阻止更新。
+Preview 2 及更早版本需要先手动安装一次新版。更新机制与发布步骤见 [UPDATES.md](docs/UPDATES.md)。
+
 ## 开发与测试
 
 构建原生测试夹具后运行：
@@ -224,7 +230,7 @@ node --test tests/test_usb_adapter.mjs
 
 Node.js 18+ 仅用于可选适配器及其测试；基础透传不需要 Node。
 测试包含本地 socket、原生 USB/IP 合成设备、模拟 sysfs 和控制器逻辑；环境需允许本地监听。
-Build 14 通过 70 个 Python 测试和 3 个 Node 测试。构建与自动化测试不能替代实机验收。
+Build 15 通过 75 个 Python 测试和 3 个 Node 测试。构建与自动化测试不能替代实机验收。
 
 ```text
 macos/    SwiftUI 界面、系统授权与 XPC 辅助服务

@@ -3,6 +3,11 @@
 This prototype uses the documented Linux USB/IP protocol. It contains no
 VirtualHere or USB Network Gate proprietary code.
 
+- Sparkle 2.10.0, https://github.com/sparkle-project/Sparkle, permissive license
+  with third-party notices in the bundled `SPARKLE_LICENSE.txt`.
+  Official binary archive pinned and SHA-256 verified by `scripts/fetch-sparkle.sh`.
+  Source: https://github.com/sparkle-project/Sparkle/tree/2.10.0
+
 - usbipdcpp, https://github.com/yunsmall/usbipdcpp
   revision `7198c4b2547534599a6e7b92b1f67a0d0c4910fa`, LGPL-3.0.
   Source is included in `vendor/usbipdcpp`, linked as a replaceable dynamic

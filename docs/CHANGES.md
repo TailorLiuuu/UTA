@@ -1,5 +1,13 @@
 # Changes
 
+## Build 15 — v0.1.0-preview.3 · 2026-10-22
+
+- Added Sparkle updates: automatic checks, manual check button, signed downloads,
+  installation and relaunch. No silent installation or system-profile submission.
+- Idle-controller reservation prevents updates from interrupting USB exports,
+  reconnect waits or remote cleanup; relaunch waits for the old daemon to exit.
+- Pinned the Sparkle dependency and added signed appcast publishing instructions.
+
 ## Build 14 — v0.1.0-preview.2 · 2026-10-22
 
 - Server and overview sidebar rows accept clicks across their full area.
