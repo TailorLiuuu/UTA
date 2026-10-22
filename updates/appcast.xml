@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
+IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+  <channel>
+    <title>UTA macOS updates</title>
+    <item>
+      <title>UTA v0.1.0-preview.3 · build 15</title>
+      <pubDate>Thu, 22 Oct 2026 04:27:32 +0000</pubDate>
+      <sparkle:version>15</sparkle:version>
+      <sparkle:shortVersionString>0.1.0-preview.3</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+      <description>在 UTA 内检查更新、下载、验证并安装。请先断开 USB 并等待清理完成。</description>
+      <link>https://github.com/TailorLiuuu/UTA/releases/tag/v0.1.0-preview.3</link>
+      <enclosure url="https://github.com/TailorLiuuu/UTA/releases/download/v0.1.0-preview.3/UTA-0.1.0-macOS-arm64.dmg" length="2803417" type="application/octet-stream" sparkle:edSignature="oU8+659C2qlmkKv4X+Ib6LdIzyO3FXWubm0AOE0Fu70u2gipvnYjLIXL14MwlBvY5YjYeJbMF7WFG4h7P5S/Cw=="></enclosure>
+    </item>
+  </channel>
+</rss><!-- sparkle-signatures:
+edSignature: DjZDaNOzBZt3gNP6KxvN59bof5TCrua8qTFPZTeMGF1e0FJ8scBm1IFDSkT7HD6LVTOncc0iLeonkcOIpewyDg==
+length: 1280
+-->
