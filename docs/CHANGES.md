@@ -1,5 +1,15 @@
 # Changes
 
+## Build 16 — v0.1.0-preview.4 · 2026-10-22
+
+- Settings gear at the bottom-left groups Chinese/English language selection and automatic updates.
+- Language changes persist and immediately update UTA views; native system and
+  Sparkle windows follow the preference on the next launch.
+- Scheduled updates use a non-modal home banner and do not reserve USB.
+  Clicking Update now retains the idle check and safe-restart protections.
+- Added presentation-only English translations, preserving device names, paths,
+  SSH commands and protocol values.
+
 ## Build 15 — v0.1.0-preview.3 · 2026-10-22
 
 - Added Sparkle updates: automatic checks, manual check button, signed downloads,

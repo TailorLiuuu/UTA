@@ -35,7 +35,7 @@ ditto --norsrc build/sparkle/Sparkle.framework "$app/Contents/Frameworks/Sparkle
 swiftc -swift-version 5 -parse-as-library -O \
     -module-cache-path "$uta_root/build/swift-cache" \
     -F "$app/Contents/Frameworks" -framework Sparkle -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
-    macos/UTA.swift macos/AppUpdate.swift macos/USBPermission.swift macos/USBHelperProtocol.swift -o "$app/Contents/MacOS/UTA"
+    macos/UTA.swift macos/Localization.swift macos/AppSettings.swift macos/AppUpdate.swift macos/USBPermission.swift macos/USBHelperProtocol.swift -o "$app/Contents/MacOS/UTA"
 swiftc -swift-version 5 -parse-as-library -O \
     -module-cache-path "$uta_root/build/swift-cache" \
     macos/USBHelperClient.swift macos/USBHelperProtocol.swift -o "$app/Contents/Resources/bin/uta-helper-client"
@@ -56,6 +56,7 @@ swiftc -swift-version 5 -parse-as-library -O \
 mkdir -p "$app/Contents/Library/LaunchDaemons"
 cp macos/dev.uta.usb-helper*.plist "$app/Contents/Library/LaunchDaemons/"
 rm "$stage/HelperPolicy.swift"
+cp macos/Resources/en.json "$app/Contents/Resources/"
 cp python/*.py "$app/Contents/Resources/python/"
 cp dist/uta-server "$app/Contents/Resources/python/uta_server.py"
 cp scripts/uta "$app/Contents/Resources/uta"
@@ -100,7 +101,9 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 <key>CFBundleIconFile</key><string>UTA.icns</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>0.1.0</string>
-<key>CFBundleVersion</key><string>15</string>
+<key>CFBundleVersion</key><string>16</string>
+<key>CFBundleDevelopmentRegion</key><string>zh-Hans</string>
+<key>CFBundleLocalizations</key><array><string>zh-Hans</string><string>en</string></array>
 <key>SUFeedURL</key><string>https://raw.githubusercontent.com/TailorLiuuu/UTA/main/updates/appcast.xml</string>
 <key>SUPublicEDKey</key><string>g3/FZ0EjxEXSqXyo63ga3J5mdkJuuOJm2G/rSGXslsc=</string>
 <key>SUEnableAutomaticChecks</key><true/>

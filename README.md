@@ -12,8 +12,8 @@ UTA 将 Mac 上选定的真实 USB 设备，通过 SSH 接入远程 Linux 服务
 
 ## 下载 Mac 预览版
 
-**[下载 DMG 安装包](https://github.com/TailorLiuuu/UTA/releases/download/v0.1.0-preview.3/UTA-0.1.0-macOS-arm64.dmg)** ·
-[Release 与 ZIP 备用包](https://github.com/TailorLiuuu/UTA/releases/tag/v0.1.0-preview.3) ·
+**[下载 DMG 安装包](https://github.com/TailorLiuuu/UTA/releases/download/v0.1.0-preview.4/UTA-0.1.0-macOS-arm64.dmg)** ·
+[Release 与 ZIP 备用包](https://github.com/TailorLiuuu/UTA/releases/tag/v0.1.0-preview.4) ·
 [首次安装指南](docs/INSTALL-macOS.md)
 
 适用于 Apple Silicon / macOS 26，需另行安装 Python 3.9+。打开 DMG，将 UTA 拖入
@@ -213,8 +213,10 @@ UTA 不会重放结果未知的写入命令，也不会自动继续中断的烧�
 
 ## App 内更新
 
-侧栏和 UTA 菜单提供「检查更新」。开启「自动检查更新」后会提示新版，
-点击下载安装，再重启即可。USB 正在使用、等待重连或清理时会阻止更新。
+左下角最底部的设置齿轮提供中文／English 选择、自动检查更新开关和「检查更新」。
+语言选择会保存并立即应用于 UTA 界面；系统及更新窗口在下次启动后跟随。
+开启自动检查后，发现新版会在首页显示提示，点击「立即更新」即可下载、安装并重启。
+后台检查不会占用 USB；USB 正在使用、等待重连或清理时会阻止安装更新。UTA 菜单也提供「检查更新」。
 Preview 2 及更早版本需要先手动安装一次新版。更新机制与发布步骤见 [UPDATES.md](docs/UPDATES.md)。
 
 ## 开发与测试

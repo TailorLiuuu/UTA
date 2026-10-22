@@ -6,12 +6,14 @@ import Sparkle
 /// start a new export between the initial idle check and application termination.
 @MainActor final class AppUpdate: NSObject, ObservableObject, SPUUpdaterDelegate {
     @Published var message = "检查更新"
+    @Published var availableVersion: String?
     @Published var checking = false
     @Published var canCheck = false
     @Published var automatic = true
     weak var model: Model?
     private var observation: NSKeyValueObservation?
     private var started = false
+    private var scheduledCheck: Task<Void, Never>?
     private(set) var reserved = false
     private(set) var installing = false
     lazy var controller = SPUStandardUpdaterController(startingUpdater: false,
@@ -25,14 +27,43 @@ import Sparkle
             Task { @MainActor in self?.canCheck = change.newValue ?? false }
         }
         controller.startUpdater()
-        automatic = controller.updater.automaticallyChecksForUpdates
-        if automatic { controller.updater.checkForUpdatesInBackground() }
+        let preferences = UserDefaults.standard
+        automatic = preferences.object(forKey: "UTA.automaticUpdates") as? Bool
+            ?? controller.updater.automaticallyChecksForUpdates
+        preferences.set(automatic, forKey: "UTA.automaticUpdates")
+        // UTA schedules information-only checks. Sparkle's scheduled UI sessions
+        // are disabled, so a home banner never holds an unfinished installer UI.
+        controller.updater.automaticallyChecksForUpdates = false
+        scheduledCheck = Task { [weak self] in
+            while !Task.isCancelled {
+                self?.probe()
+                do { try await Task.sleep(for: .seconds(6 * 60 * 60)) }
+                catch { return }
+            }
+        }
     }
 
-    func check() { controller.checkForUpdates(nil) }
+    func check() {
+        guard controller.updater.canCheckForUpdates else { return }
+        do {
+            try reserveForInteractiveUpdate()
+            controller.checkForUpdates(nil)
+        } catch { model?.error = error.localizedDescription }
+    }
+    private func reserveForInteractiveUpdate() throws {
+        _ = try Self.request("update_prepare")
+        reserved = true
+        checking = true
+    }
+    private func probe() {
+        if automatic && controller.updater.canCheckForUpdates {
+            controller.updater.checkForUpdateInformation()
+        }
+    }
     func setAutomatic(_ value: Bool) {
         automatic = value
-        controller.updater.automaticallyChecksForUpdates = value
+        UserDefaults.standard.set(value, forKey: "UTA.automaticUpdates")
+        if value { probe() }
     }
 
     // The delegate must return synchronously. The small local RPC is bounded and
@@ -55,18 +86,19 @@ import Sparkle
               response["ok"] as? Bool == true else {
             let response = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
             throw NSError(domain: "UTA.Update", code: 1, userInfo: [NSLocalizedDescriptionKey:
-                response?["error"] as? String ?? "无法确认本地后台状态，请稍后重试"])
+                response?["error"] as? String ?? L("无法确认本地后台状态，请稍后重试")])
         }
         return response["result"] as? [String: Any] ?? [:]
     }
 
     func updater(_ updater: SPUUpdater, mayPerform updateCheck: SPUUpdateCheck) throws {
-        _ = try Self.request("update_prepare")
-        reserved = true
-        checking = true
+        // Scheduled checks only discover versions. They never reserve USB or
+        // open an update window; the home banner is the gentle reminder.
+        if updateCheck == .updates { try reserveForInteractiveUpdate() }
         message = "正在检查更新…"
     }
     func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
+        availableVersion = item.displayVersionString
         message = "发现新版本 · " + item.displayVersionString
     }
     func updater(_ updater: SPUUpdater, willDownloadUpdate item: SUAppcastItem, with request: NSMutableURLRequest) {
@@ -79,6 +111,7 @@ import Sparkle
     func updater(_ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck, error: Error?) {
         guard !installing || error != nil else { return }
         installing = false
+        if let error, (error as NSError).code == SUError.noUpdateError.rawValue { availableVersion = nil }
         releaseReservation()
         if let error, (error as NSError).code != SUError.noUpdateError.rawValue {
             message = "检查未完成，请重试"
@@ -107,7 +140,7 @@ import Sparkle
                 let result = try AppUpdate.request("update_shutdown")
                 guard let pid = result["pid"] as? Int32 else {
                     throw NSError(domain: "UTA.Update", code: 2,
-                        userInfo: [NSLocalizedDescriptionKey: "后台未返回退出状态"])
+                        userInfo: [NSLocalizedDescriptionKey: L("后台未返回退出状态")])
                 }
                 for _ in 0..<100 {
                     if kill(pid, 0) != 0 && errno == ESRCH {
@@ -117,7 +150,7 @@ import Sparkle
                     try await Task.sleep(for: .milliseconds(100))
                 }
                 throw NSError(domain: "UTA.Update", code: 3,
-                    userInfo: [NSLocalizedDescriptionKey: "后台未及时退出，暂未安装更新，请重试"])
+                    userInfo: [NSLocalizedDescriptionKey: L("后台未及时退出，暂未安装更新，请重试")])
             } catch {
                 update.model?.suspendedForUpdate = false
                 update.model?.error = error.localizedDescription
@@ -126,21 +159,5 @@ import Sparkle
             }
         }
         return .terminateLater
-    }
-}
-
-struct AppUpdateView: View {
-    @EnvironmentObject var updater: AppUpdate
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Button { updater.check() } label: {
-                Label(updater.message, systemImage: "arrow.down.circle")
-                    .font(.system(size: 12)).foregroundStyle(accent)
-            }.buttonStyle(.plain).disabled(!updater.canCheck)
-            Toggle("自动检查更新", isOn: Binding(get: { updater.automatic }, set: updater.setAutomatic))
-                .toggleStyle(.checkbox).font(.system(size: 11)).foregroundStyle(muted)
-            Text("v\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "") · build \(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "")")
-                .font(.system(size: 10)).foregroundStyle(muted)
-        }.padding(.horizontal, 24).padding(.top, 16)
     }
 }

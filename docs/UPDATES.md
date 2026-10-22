@@ -1,14 +1,16 @@
 # App updates
 
-UTA build 15 adds Sparkle 2.10.0. The sidebar and application menu include
-“检查更新”; automatic checks can be disabled in the sidebar. The standard
+UTA build 15 adds Sparkle 2.10.0. The settings gear and application menu include
+“检查更新”; automatic checks can be disabled in Settings. From build 16, scheduled
+checks show a home-page banner without blocking USB or opening a dialog. The standard
 Sparkle window presents the version, download progress, installation and relaunch.
 Automatic installation and system-profile submission are disabled.
 
 Preview 2 and older do not have an updater: install the new DMG once manually.
 Updates affect the Mac App, not Linux agents, user settings or project firmware.
 
-The controller atomically reserves an idle instance during an update cycle.
+The controller atomically reserves an idle instance during a user-initiated update cycle.
+Scheduled checks do not reserve the controller.
 Active exports, operations, reconnect deadlines and pending remote cleanup block
 updates. New CLI operations are refused while reserved. Cancelling or failing the
 check releases the reservation; a dead UI process also releases it. Before app
