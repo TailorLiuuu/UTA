@@ -1,5 +1,17 @@
 # Changes
 
+## Build 18 — v0.1.0-preview.6 · 2026-10-27
+
+- Keep the active USB tunnel through transient control-SSH status failures.
+  Throttle status checks to at least 10-second intervals, with at least three failures and
+  30 seconds of failure grace before releasing an unconfirmed connection.
+- Continue checking exporter/tunnel process exits on every watch cycle. An
+  explicit remote disconnection still triggers cleanup without the probe grace.
+- Show an amber unconfirmed-state warning and label ports as last confirmed
+  while retrying. Clear the warning on a successful check.
+- Record bounded connection-event logs with state transitions, probe failures,
+  recovery and transport exit codes. Flash protocols remain external to UTA.
+
 ## Build 17 — v0.1.0-preview.5 · 2026-10-26
 
 - Hide completed sessions for absent USBs from the device cards after unplug/replug.

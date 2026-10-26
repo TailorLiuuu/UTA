@@ -335,6 +335,8 @@ class ConfigTests(unittest.TestCase):
             (Path(root) / "config.json").write_text(json.dumps(c.config))
             c.sessions["1-2"] = dict(busid="1-2", server_id=host["id"], state="attached",
                                       session="a" * 32, nodes=["/dev/ttyACM0"])
+            dead = Mock(); dead.poll.return_value = 255
+            c.processes["1-2"] = [dead]
             with patch.object(client, "remote_json", side_effect=RuntimeError("offline")):
                 c.monitor_one("1-2")
             self.assertTrue(c.sessions["1-2"]["remote_cleanup_pending"])

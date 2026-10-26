@@ -40,6 +40,9 @@ BUSID = re.compile(r"[0-9]+-[0-9.:]+")
 TARGET = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.@:-]*")
 ACTIVE = {"connecting", "enumerating", "attached", "waiting_reconnect"}
 RECONNECT_SECONDS = 120
+MONITOR_INTERVAL = 10
+MONITOR_FAILURE_LIMIT = 3
+MONITOR_FAILURE_GRACE = 30
 USB_ID = re.compile(r"[0-9a-f]{4}:[0-9a-f]{4}")
 
 
@@ -288,7 +291,8 @@ class Controller:
         self.busy = set()
         self.update_owner = None
         self.stopping = threading.Event()
-        self.last_monitor = 0.0
+        self.monitor_checks = {}
+        self.events_path = HOME / "logs" / "connection-events.jsonl"
         self.diagnostics = {}
         self.last_diagnostics = 0.0
         self.diagnostic_devices = []
@@ -319,10 +323,28 @@ class Controller:
             raise ValueError("服务器不存在")
         return copy.deepcopy(item)
 
+    def event(self, event, busid, **details):
+        # Diagnostic failures must never disrupt the USB data path.
+        try:
+            with self.lock:
+                if self.events_path.exists() and self.events_path.stat().st_size > 1024 * 1024:
+                    self.events_path.replace(self.events_path.with_suffix(".previous.jsonl"))
+                row = dict(time=time.time(), event=event, busid=busid,
+                           session=self.sessions.get(busid, {}).get("session"), **details)
+                fd = os.open(self.events_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+                with os.fdopen(fd, "a") as log:
+                    log.write(json.dumps(row, ensure_ascii=False) + "\n")
+        except OSError:
+            pass
+
     def update(self, busid, **values):
         with self.lock:
             if busid in self.sessions:
+                previous = self.sessions[busid].get("state")
                 self.sessions[busid].update(values, updated=time.time())
+                if values.get("state") and values["state"] != previous:
+                    self.event("state_changed", busid, before=previous, after=values["state"],
+                               reason=values.get("disconnect_reason") or values.get("message", ""))
 
     def background(self, key, task):
         with self.lock:
@@ -642,25 +664,57 @@ class Controller:
             processes = list(self.processes.get(busid, []))
         if not item or item["state"] not in ("enumerating", "attached"):
             return
+        # Check data-path processes on every watch tick, independently of SSH
+        # health-query throttling. Their exit is definitive, not a probe timeout.
+        exited = [(i, code) for i, p in enumerate(processes) if (code := p.poll()) is not None]
+        if exited:
+            self.event("transport_exited", busid, processes=[
+                dict(role="exporter" if i == 0 else "ssh_tunnel", returncode=code) for i, code in exited])
+            self.connection_lost(busid, "USB 导出器或 SSH 隧道已停止")
+            return
+        now = time.monotonic()
+        health = self.monitor_checks.get(busid)
+        if not health or health["session"] != item.get("session"):
+            health = dict(session=item.get("session"), next_check=0, failures=0, first_failure=None)
+            self.monitor_checks[busid] = health
+        if now < health["next_check"]:
+            return
+        health["next_check"] = now + MONITOR_INTERVAL
         try:
-            if any(p.poll() is not None for p in processes):
-                self.connection_lost(busid, "USB 导出器或 SSH 隧道已停止")
-                return
             info = remote_json(self.server(item["server_id"]),
                                ["status", "--session", item["session"]])
-            if info["state"] == "disconnected":
-                self.connection_lost(busid, "设备已掉线或重启")
-                return
-            if info["state"] == "enumerating" and time.time() - item.get("created", time.time()) > 45:
-                raise RuntimeError("云端 USB 枚举超时；请检查 USB 日志、设备权限及服务器内核日志，再重新接入。")
-            self.update(busid, state=info["state"], nodes=info.get("nodes", []),
-                        message="云端 USB 已挂载；可运行烧录工具" if info["state"] == "attached"
-                        else "隧道已连接，Linux 正在枚举设备…",
-                        last_verified=time.time())
-            if info["state"] == "attached":
-                self.update(busid, reconnect_deadline=0, reconnect_attempts=0)
+            if info.get("state") not in ("attached", "enumerating", "disconnected"):
+                raise RuntimeError("云端返回了未知的 USB 状态")
         except Exception as exc:
-            self.connection_lost(busid, str(exc))
+            # A fresh control SSH connection can fail while the existing USB
+            # tunnel is healthy. Keep nodes and transport during a bounded grace.
+            health["failures"] += 1
+            if health["first_failure"] is None:
+                health["first_failure"] = time.monotonic()
+            age = time.monotonic() - health["first_failure"]
+            self.event("status_probe_failed", busid, failures=health["failures"], error=str(exc))
+            self.update(busid, monitor_failures=health["failures"], monitor_error=str(exc),
+                        message="云端状态暂未确认，USB 通道仍保持；正在重试检查")
+            if health["failures"] >= MONITOR_FAILURE_LIMIT and age >= MONITOR_FAILURE_GRACE:
+                self.event("status_probe_expired", busid, seconds=age)
+                self.connection_lost(busid, "云端状态持续无法确认：" + str(exc))
+            return
+        if health["failures"]:
+            self.event("status_probe_recovered", busid, failures=health["failures"])
+        health.update(failures=0, first_failure=None)
+        self.update(busid, monitor_failures=0, monitor_error=None)
+        if info["state"] == "disconnected":
+            self.connection_lost(busid, "设备已掉线或重启")
+            return
+        if info["state"] == "enumerating" and time.time() - item.get("created", time.time()) > 45:
+            self.connection_lost(busid, "云端 USB 枚举超时；请检查 USB 日志、设备权限及服务器内核日志，再重新接入。")
+            return
+        self.update(busid, state=info["state"], nodes=info.get("nodes", []),
+                    message="云端 USB 已挂载；可运行烧录工具" if info["state"] == "attached"
+                    else "隧道已连接，Linux 正在枚举设备…",
+                    last_verified=time.time())
+        if info["state"] == "attached":
+            self.update(busid, reconnect_deadline=0, reconnect_attempts=0)
 
     def watch(self):
         while not self.stopping.is_set():

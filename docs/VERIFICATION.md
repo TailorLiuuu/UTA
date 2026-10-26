@@ -1,6 +1,18 @@
-# Verification — updated 2026-10-21
+# Verification — updated 2026-10-27
 
-## Current state: build 13
+## Build 18 / Preview 6
+
+- 83 Python tests and 3 Node tests passed, including native USB/IP loopback
+  fixtures and control-SSH failure/recovery/timeout regression cases.
+- Swift localization (304 entries) and device-list checks passed. The UI compiled,
+  was Developer ID signed, installed and observed with one attached serial device.
+- The physical-test build reuses the installed helper/client and native transport binaries;
+  this change affects the controller, status presentation and diagnostics.
+- Transient query failures are covered by injected automated failures. They are
+  not a completed physical weak-network or network-outage stress test.
+- Physical serial-log and flashing results: [2026-10-27 report](PERFORMANCE-2026-10-27.md).
+
+## Historical state: build 13
 
 - 64 Python regression tests and 3 Node USB-adapter tests passed.
 - Signed Apple Silicon / macOS 26 App built and installed; strict/deep signature verification passed. The development build is not notarized.

@@ -6,14 +6,14 @@ UTA 将 Mac 上选定的真实 USB 设备，通过 SSH 接入远程 Linux 服务
 服务器上的工具直接使用虚拟 USB 和对应串口，固件与编译环境留在服务器，
 无需来回下载文件到本机烧录。
 
-**当前状态：0.1 实验原型，build 15（Preview 3）。** 已完成部分开发板实机验证，尚未完成通用 USB
+**当前状态：0.1 实验原型，build 18（Preview 6）。** 已完成部分开发板实机验证，尚未完成通用 USB
 兼容性验收。当前支持 **macOS Apple Silicon → Linux**，没有 Windows 或 iOS 客户端。
 提供预编译安装包与源码。预览版已签名，但尚未经过 Apple 公证。
 
 ## 下载 Mac 预览版
 
-**[下载 DMG 安装包](https://github.com/TailorLiuuu/UTA/releases/download/v0.1.0-preview.5/UTA-0.1.0-macOS-arm64.dmg)** ·
-[Release 与 ZIP 备用包](https://github.com/TailorLiuuu/UTA/releases/tag/v0.1.0-preview.5) ·
+**[下载 DMG 安装包](https://github.com/TailorLiuuu/UTA/releases/download/v0.1.0-preview.6/UTA-0.1.0-macOS-arm64.dmg)** ·
+[Release 与 ZIP 备用包](https://github.com/TailorLiuuu/UTA/releases/tag/v0.1.0-preview.6) ·
 [首次安装指南](docs/INSTALL-macOS.md)
 
 适用于 Apple Silicon / macOS 26，需另行安装 Python 3.9+。打开 DMG，将 UTA 拖入
@@ -207,6 +207,14 @@ UTA 不会重放结果未知的写入命令，也不会自动继续中断的烧�
 性能取决于网络往返延迟、工具的 USB 请求方式、数据块大小与驱动。
 逐小包同步等待的工具在远程链路上可能明显变慢；仅升级 UTA 不会让它自动获得高速烧录能力。
 可选的[异步 USB 接口](docs/USB-TRANSACTIONS.md)需要外部工具主动使用，不能透明改变第三方烧录协议。
+原版 esptool 波特率对比、连续串口日志采样及证据边界见[烧录与日志实测](docs/PERFORMANCE-2026-10-27.md)。
+
+烧录或持续读日志时，短暂的 SSH 状态查询失败不会立即拆掉现有 USB 通道。
+界面会显示「状态待确认」，端口保留为最后确认的结果；查询恢复后提示自动消失。
+连续多次查询失败且超过宽限期，或导出器／隧道已退出、云端确认设备断开时，才释放连接。
+这不代表网络中断期间仍能正常传输，也不提供烧录自动续传。
+排查时可查看 `~/Library/Application Support/UTA/logs/connection-events.jsonl`；
+记录包括状态变化、查询失败／恢复和传输进程退出码，文件会轮转并保留一份历史。
 
 云端仍需设备对应的驱动和工具；Windows 专用烧录器不能直接在 Linux 上运行。
 同一设备只能被一个目标独占使用。本工具不是为互不信任租户设计的安全隔离系统。
@@ -232,7 +240,8 @@ node --test tests/test_usb_adapter.mjs
 
 Node.js 18+ 仅用于可选适配器及其测试；基础透传不需要 Node。
 测试包含本地 socket、原生 USB/IP 合成设备、模拟 sysfs 和控制器逻辑；环境需允许本地监听。
-Build 15 通过 75 个 Python 测试和 3 个 Node 测试。构建与自动化测试不能替代实机验收。
+Build 18 本地验证通过 83 个 Python 测试、3 个 Node 测试及 Swift 语言／设备列表检查。
+构建与自动化测试不能替代实机验收。
 
 ```text
 macos/    SwiftUI 界面、系统授权与 XPC 辅助服务

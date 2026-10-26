@@ -298,5 +298,9 @@
   "{0}；可通过「手动安装」在终端交互授权": "{0}; use Manual installation to authenticate interactively in Terminal",
   "未提供 · 请按 USB 接口位置识别": "Not provided · identify by physical USB port",
   "中文": "中文",
-  "设备复位或切换模式后，UTA 会释放旧端口，并等待 2 分钟自动接回原服务器。按原 USB 插口、序列号及你允许的 VID:PID 匹配；首次出现新标识时会请求确认。手动断开可取消重连。UTA 不执行或重发设备协议命令，一个设备同时只交给一台服务器使用。": "When a device resets or changes mode, UTA releases the previous port and waits up to 2 minutes to reconnect to the original server. Matching uses the original USB port, serial number and allowed VID:PID identities. Confirm new identities when prompted. Disconnect cancels reconnection. UTA does not run or retry device protocol commands; one device is shared with only one server at a time."
+  "设备复位或切换模式后，UTA 会释放旧端口，并等待 2 分钟自动接回原服务器。按原 USB 插口、序列号及你允许的 VID:PID 匹配；首次出现新标识时会请求确认。手动断开可取消重连。UTA 不执行或重发设备协议命令，一个设备同时只交给一台服务器使用。": "When a device resets or changes mode, UTA releases the previous port and waits up to 2 minutes to reconnect to the original server. Matching uses the original USB port, serial number and allowed VID:PID identities. Confirm new identities when prompted. Disconnect cancels reconnection. UTA does not run or retry device protocol commands; one device is shared with only one server at a time.",
+  "状态待确认": "Status unconfirmed",
+  "状态检查暂时失败，保留现有 USB 通道并重试。下方为最后确认的端口。": "Status check failed temporarily. Keeping the USB channel and retrying. Ports below were last confirmed.",
+  "云端状态暂未确认，USB 通道仍保持；正在重试检查": "Remote status is unconfirmed; the USB channel is preserved while checks retry.",
+  "云端状态持续无法确认：": "Remote status could not be confirmed after repeated checks: "
 }

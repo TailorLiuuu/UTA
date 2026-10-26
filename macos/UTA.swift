@@ -122,6 +122,9 @@ struct Session: Decodable {
     let reconnectIds: [String]?
     let reconnectCandidate: ReconnectCandidate?
     let reconnectRemembered: Bool?
+    let monitorFailures: Int?
+    let monitorError: String?
+    var statusUncertain: Bool { ["attached", "enumerating"].contains(state) && (monitorFailures ?? 0) > 0 }
     var isActive: Bool { ["connecting", "enumerating", "attached", "disconnecting", "waiting_reconnect"].contains(state) }
 }
 
@@ -511,6 +514,13 @@ struct RemotePortsView: View {
         if session.state == "attached" || session.state == "enumerating" {
             VStack(alignment: .leading, spacing: 7) {
                 Text(L("云端设备端口 · \(serverName)")).font(.system(size: 12, weight: .semibold))
+                if session.statusUncertain {
+                    Label(L("状态检查暂时失败，保留现有 USB 通道并重试。下方为最后确认的端口。"), systemImage: "exclamationmark.triangle")
+                        .font(.system(size: 11)).foregroundStyle(.orange)
+                    if let error = session.monitorError {
+                        Text(error).font(.system(size: 10)).foregroundStyle(muted).textSelection(.enabled)
+                    }
+                }
                 if session.state == "enumerating" {
                     Text(L("正在识别 USB，云端端口尚未就绪。"))
                         .font(.system(size: 12)).foregroundStyle(.orange)
@@ -549,6 +559,7 @@ struct DeviceCard: View {
     var session: Session? { model.session(device) }
     var busy: Bool { model.state.busy.contains(device.busid) }
     var status: (String, Color) {
+        if session?.statusUncertain == true { return (L("状态待确认"), .orange) }
         switch session?.state {
         case "attached": return (L("云端已挂载"), accent)
         case "connecting": return (L("正在连接"), .orange)
@@ -811,9 +822,9 @@ struct ContentView: View {
                                             .font(.system(size: 11, design: .monospaced)).foregroundStyle(muted)
                                     }
                                     Spacer()
-                                    Badge(text: s.state == "attached" ? L("云端已挂载") :
+                                    Badge(text: s.statusUncertain ? L("状态待确认") : s.state == "attached" ? L("云端已挂载") :
                                             (s.state == "waiting_reconnect" ? L("等待设备重连") : (s.remoteCleanupPending == true ? L("正在自动清理") : (s.isActive ? L("正在处理") : L("已断开")))),
-                                          color: s.state == "attached" ? accent : (s.isActive || s.remoteCleanupPending == true ? .orange : muted))
+                                          color: s.statusUncertain ? .orange : s.state == "attached" ? accent : (s.isActive || s.remoteCleanupPending == true ? .orange : muted))
                                     if s.isActive {
                                         Button(L("断开")) {
                                             Task { await model.call(["action": "disconnect", "busid": s.busid]) }
@@ -1053,7 +1064,7 @@ struct ContentView: View {
         let assigned = session.flatMap { model.host($0.serverId) }
         let elsewhere = assigned != nil && assigned?.id != host.id && session?.state != "local"
         let state = session?.state ?? "local"
-        let label = state == "attached" ? L("云端已挂载") :
+        let label = session?.statusUncertain == true ? L("状态待确认") : state == "attached" ? L("云端已挂载") :
             state == "connecting" ? L("正在连接") :
             state == "enumerating" ? L("等待枚举") :
             state == "disconnecting" ? L("正在释放") :
@@ -1073,7 +1084,7 @@ struct ContentView: View {
                     Text("\(device.vidpid) · \(device.busid)").font(.system(size: 11, design: .monospaced)).foregroundStyle(muted)
                 }
                 Spacer()
-                Badge(text: label, color: state == "error" ? .red : state == "attached" ? accent : muted)
+                Badge(text: label, color: session?.statusUncertain == true ? .orange : state == "error" ? .red : state == "attached" ? accent : muted)
             }
             if elsewhere {
                 Text(L("当前分配给 \(assigned?.name ?? "")；接入将先释放旧连接。"))
