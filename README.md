@@ -12,8 +12,8 @@ UTA 将 Mac 上选定的真实 USB 设备，通过 SSH 接入远程 Linux 服务
 
 ## 下载 Mac 预览版
 
-**[下载 DMG 安装包](https://github.com/TailorLiuuu/UTA/releases/download/v0.1.0-preview.4/UTA-0.1.0-macOS-arm64.dmg)** ·
-[Release 与 ZIP 备用包](https://github.com/TailorLiuuu/UTA/releases/tag/v0.1.0-preview.4) ·
+**[下载 DMG 安装包](https://github.com/TailorLiuuu/UTA/releases/download/v0.1.0-preview.5/UTA-0.1.0-macOS-arm64.dmg)** ·
+[Release 与 ZIP 备用包](https://github.com/TailorLiuuu/UTA/releases/tag/v0.1.0-preview.5) ·
 [首次安装指南](docs/INSTALL-macOS.md)
 
 适用于 Apple Silicon / macOS 26，需另行安装 Python 3.9+。打开 DMG，将 UTA 拖入
@@ -96,12 +96,12 @@ UTA_ALLOW_ADHOC=1 bash scripts/build.sh
 | 构建输出 | 用途 |
 | --- | --- |
 | `dist/UTA-0.1.0-macOS-arm64.zip` | 包含 App、本地 CLI 启动器、服务器脚本及测试指南的分发包 |
-| `dist/UTA.app` | 桌面应用 |
-| `dist/uta` | 调用旁边 App 内本地 CLI 的启动器 |
+| `dist/UTA-0.1.0-macOS-arm64.dmg` | 发给用户的安装包；安装到 `/Applications/UTA.app` |
+| `dist/uta` | 调用已安装的 `/Applications/UTA.app` 内本地 CLI 的启动器 |
 | `dist/uta-server` | 可单文件安装的 Linux CLI |
 | `dist/uta-usb-io`、`dist/uta-usb-transport.mjs` | 可选的通用异步 USB 接口，供外部应用主动接入 |
 
-建议从 ZIP 解压安装 App；构建在临时目录完成签名和归档，避免同步目录元数据影响签名。
+对外分发优先使用 DMG，ZIP 为备用开发分发包。构建在不参与索引的临时目录完成签名和归档，避免同步目录元数据影响签名；`dist` 不再保留裸 App 和历次 App 副本。
 构建后可运行 `UTA_SIGN_IDENTITY="你的签名身份" bash scripts/package-macos.sh` 制作 DMG。
 
 ## 快速开始

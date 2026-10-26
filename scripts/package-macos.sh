@@ -7,7 +7,9 @@ uta_app=$(cat build/verified-app-path.txt)
 test -d "$uta_app"
 codesign --verify --deep --strict "$uta_app"
 uta_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$uta_app/Contents/Info.plist")
-uta_stage=$(mktemp -d /private/tmp/uta-dmg.XXXXXX)
+mkdir -p /private/tmp/uta-builds.noindex
+uta_stage=$(mktemp -d /private/tmp/uta-builds.noindex/dmg.XXXXXX)
+trap 'rm -rf "$uta_stage"' EXIT
 mkdir "$uta_stage/content"
 ditto --norsrc "$uta_app" "$uta_stage/content/UTA.app"
 ln -s /Applications "$uta_stage/content/Applications"

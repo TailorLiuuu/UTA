@@ -752,12 +752,17 @@ struct ContentView: View {
     @State private var submitting = false
     var selected: Host? { model.selected.flatMap { model.host($0) } }
     var attached: Int { model.state.sessions.filter { $0.state == "attached" }.count }
-    var capturedSessions: [Session] {
+    var visibleMissingSessions: [Session] {
         model.state.sessions.filter { s in
-            s.isActive && !model.state.devices.contains { $0.busid == s.busid }
+            !model.state.devices.contains { $0.busid == s.busid }
+                && (selected == nil || s.serverId == selected?.id)
+                && showsMissingUSBSession(state: s.state,
+                    cleanupPending: s.remoteCleanupPending == true,
+                    busy: model.state.busy.contains(s.busid),
+                    reconnectDeadline: s.reconnectDeadline, now: Date().timeIntervalSince1970)
         }
     }
-    var knownDeviceCount: Int { model.state.devices.count + capturedSessions.count }
+    var knownDeviceCount: Int { model.state.devices.count + visibleMissingSessions.count }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -784,7 +789,7 @@ struct ContentView: View {
                             Label(model.state.scanError, systemImage: "exclamationmark.triangle")
                                 .font(.system(size: 12)).foregroundStyle(.red).textSelection(.enabled)
                         }
-                        if model.state.devices.isEmpty && capturedSessions.isEmpty {
+                        if model.state.devices.isEmpty && visibleMissingSessions.isEmpty {
                             VStack(spacing: 13) {
                                 Image(systemName: "cable.connector.horizontal").font(.system(size: 42)).foregroundStyle(accent.opacity(0.7))
                                 Text(model.loading ? L("正在读取 USB 设备…") : L("插入你的开发板")).font(.headline)
@@ -797,11 +802,7 @@ struct ContentView: View {
                             if let selected { serverDevice(device, host: selected) }
                             else { DeviceCard(device: device) }
                         }
-                        let missing = model.state.sessions.filter { s in
-                            !model.state.devices.contains { $0.busid == s.busid }
-                                && (selected == nil || s.serverId == selected?.id)
-                        }
-                        ForEach(missing, id: \.busid) { s in
+                        ForEach(visibleMissingSessions, id: \.busid) { s in
                             VStack(alignment: .leading, spacing: 12) {
                                 HStack {
                                     VStack(alignment: .leading, spacing: 5) {

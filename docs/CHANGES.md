@@ -1,5 +1,13 @@
 # Changes
 
+## Build 17 — v0.1.0-preview.5 · 2026-10-26
+
+- Hide completed sessions for absent USBs from the device cards after unplug/replug.
+  Keep captured devices, pending cleanup, busy operations and reconnection visible.
+- Device counts, cards and empty state use the same missing-session selection.
+- Build outputs no longer accumulate loose App copies in dist or previous-app
+  folders; packaging stages are excluded from indexing and DMG staging is cleaned.
+
 ## Build 16 — v0.1.0-preview.4 · 2026-10-22
 
 - Settings gear at the bottom-left groups Chinese/English language selection and automatic updates.

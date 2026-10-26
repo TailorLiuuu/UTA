@@ -1,6 +1,6 @@
 # UTA Mac 预览版安装指南
 
-下载：https://github.com/TailorLiuuu/UTA/releases/tag/v0.1.0-preview.4
+下载：https://github.com/TailorLiuuu/UTA/releases/tag/v0.1.0-preview.5
 
 ## 安装前确认
 

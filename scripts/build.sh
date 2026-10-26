@@ -26,7 +26,8 @@ cmake -S native -B build/native -DCMAKE_BUILD_TYPE=Release
 cmake --build build/native -j 6
 # File-provider metadata in a synced Documents folder can invalidate app signing.
 # Sign and archive outside that folder; the ZIP is the distributable artifact.
-stage=$(mktemp -d /private/tmp/uta-build.XXXXXX)
+mkdir -p /private/tmp/uta-builds.noindex
+stage=$(mktemp -d /private/tmp/uta-builds.noindex/build.XXXXXX)
 app="$stage/UTA.app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/bin" "$app/Contents/Resources/python"
 mkdir -p "$app/Contents/Resources/docs" "$app/Contents/Resources/licenses"
@@ -35,7 +36,7 @@ ditto --norsrc build/sparkle/Sparkle.framework "$app/Contents/Frameworks/Sparkle
 swiftc -swift-version 5 -parse-as-library -O \
     -module-cache-path "$uta_root/build/swift-cache" \
     -F "$app/Contents/Frameworks" -framework Sparkle -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
-    macos/UTA.swift macos/Localization.swift macos/AppSettings.swift macos/AppUpdate.swift macos/USBPermission.swift macos/USBHelperProtocol.swift -o "$app/Contents/MacOS/UTA"
+    macos/UTA.swift macos/DeviceListPolicy.swift macos/Localization.swift macos/AppSettings.swift macos/AppUpdate.swift macos/USBPermission.swift macos/USBHelperProtocol.swift -o "$app/Contents/MacOS/UTA"
 swiftc -swift-version 5 -parse-as-library -O \
     -module-cache-path "$uta_root/build/swift-cache" \
     macos/USBHelperClient.swift macos/USBHelperProtocol.swift -o "$app/Contents/Resources/bin/uta-helper-client"
@@ -101,7 +102,7 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 <key>CFBundleIconFile</key><string>UTA.icns</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>0.1.0</string>
-<key>CFBundleVersion</key><string>16</string>
+<key>CFBundleVersion</key><string>17</string>
 <key>CFBundleDevelopmentRegion</key><string>zh-Hans</string>
 <key>CFBundleLocalizations</key><array><string>zh-Hans</string><string>en</string></array>
 <key>SUFeedURL</key><string>https://raw.githubusercontent.com/TailorLiuuu/UTA/main/updates/appcast.xml</string>
@@ -143,12 +144,14 @@ uta_release=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 exec "$uta_release/UTA.app/Contents/Resources/uta" "$@"
 SH
 chmod +x "$stage/uta"
-cp "$stage/uta" dist/uta
-if [ -d "$uta_root/dist/UTA.app" ]; then
-    previous=$(mktemp -d "$uta_root/build/previous-app.XXXXXX")
-    mv "$uta_root/dist/UTA.app" "$previous/UTA.app"
-fi
-ditto --norsrc "$app" "$uta_root/dist/UTA.app"
+cat > dist/uta <<'SH'
+#!/bin/sh
+set -eu
+exec /Applications/UTA.app/Contents/Resources/uta "$@"
+SH
+chmod +x dist/uta
+# Keep only archives in dist. Loose application bundles and previous-app copies
+# are discovered by LaunchServices and create duplicate UTA launcher entries.
 ditto -c -k --norsrc "$stage" "$uta_root/dist/UTA-0.1.0-macOS-arm64.zip"
 printf '%s\n' "$app" > build/verified-app-path.txt
 echo "Signed and verified: $app"
