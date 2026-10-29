@@ -19,7 +19,7 @@ codesign --verify --deep --strict "$uta_stage/content/UTA.app"
 uta_dmg="$uta_root/dist/UTA-${uta_version}-macOS-arm64.dmg"
 hdiutil create -volname UTA -srcfolder "$uta_stage/content" -format UDZO -ov "$uta_dmg"
 if [ -n "${UTA_SIGN_IDENTITY:-}" ] && [ "$UTA_SIGN_IDENTITY" != "-" ]; then
-    codesign --force --sign "$UTA_SIGN_IDENTITY" --timestamp "$uta_dmg"
+    codesign --force --sign "$UTA_SIGN_IDENTITY" --timestamp=http://timestamp.apple.com/ts01 "$uta_dmg"
     codesign --verify --strict "$uta_dmg"
 fi
 hdiutil verify "$uta_dmg"

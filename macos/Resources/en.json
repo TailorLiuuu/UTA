@@ -302,5 +302,10 @@
   "状态待确认": "Status unconfirmed",
   "状态检查暂时失败，保留现有 USB 通道并重试。下方为最后确认的端口。": "Status check failed temporarily. Keeping the USB channel and retrying. Ports below were last confirmed.",
   "云端状态暂未确认，USB 通道仍保持；正在重试检查": "Remote status is unconfirmed; the USB channel is preserved while checks retry.",
-  "云端状态持续无法确认：": "Remote status could not be confirmed after repeated checks: "
+  "云端状态持续无法确认：": "Remote status could not be confirmed after repeated checks: ",
+  "CH340 串口加速已启用 · 重启后需重新启用": "CH340 acceleration enabled · re-enable after reboot",
+  "检测到其他 CH340 测试驱动": "Another CH340 test driver is loaded",
+  "CH340 串口加速可选启用": "CH340 serial acceleration is available",
+  "此内核暂不支持 CH340 加速配置": "CH340 tuning is not supported on this kernel yet",
+  "串口加速指南": "Serial acceleration guide"
 }

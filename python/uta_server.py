@@ -16,8 +16,9 @@ import struct
 import subprocess
 import sys
 import time
+import uta_ch341
 
-VERSION = "0.1.0"
+VERSION = "0.1.0-preview.7"
 VHCI = Path("/sys/devices/platform/vhci_hcd.0")
 STATE = Path("/run/uta")
 # Keep existing live session records accessible when upgrading an older agent.
@@ -162,7 +163,7 @@ def record_status(record):
 
 def doctor():
     return dict(version=VERSION, platform=sys.platform, python=sys.version.split()[0],
-                route_identity=True,
+                route_identity=True, ch341_tuning=uta_ch341.status(),
                 uid=owner(), root=os.geteuid() == 0, vhci_available=VHCI.exists(),
                 free_ports=sum(p["status"] == 4 for p in ports()),
                 message="ready" if VHCI.exists() else "Run sudo modprobe vhci_hcd; kernel must include CONFIG_USBIP_VHCI_HCD")
@@ -245,6 +246,8 @@ def main():
     parser = argparse.ArgumentParser(prog="uta-server", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("doctor")
+    tune = sub.add_parser("tune-ch341", help="Opt-in Linux 5.15 CH340 USB/IP throughput tuning")
+    tune.add_argument("action", choices=("status", "build", "enable", "disable"))
     sub.add_parser("list")
     status = sub.add_parser("status")
     status.add_argument("--session", required=True)
@@ -260,7 +263,9 @@ def main():
     try:
         if sys.platform != "linux":
             raise RuntimeError("This CLI must run on Linux, not on the Mac")
-        if args.command == "doctor":
+        if args.command == "tune-ch341":
+            result = uta_ch341.dispatch(args.action)
+        elif args.command == "doctor":
             result = doctor()
         elif args.command == "list":
             result = list_sessions()

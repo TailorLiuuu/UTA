@@ -196,6 +196,16 @@ struct Check: Decodable {
 }
 struct AgentDetails: Decodable {
     let version: String?
+    let ch341Tuning: SerialTuning?
+}
+struct SerialTuning: Decodable {
+    let state: String
+    let supported: Bool
+    var message: String {
+        if state == "enabled" { return L("CH340 串口加速已启用 · 重启后需重新启用") }
+        if state == "external_driver" { return L("检测到其他 CH340 测试驱动") }
+        return supported ? L("CH340 串口加速可选启用") : L("此内核暂不支持 CH340 加速配置")
+    }
 }
 struct Snapshot: Decodable {
     let servers: [Host]
@@ -1017,6 +1027,18 @@ struct ContentView: View {
                 Text(check?.installation == "installed" ? "" : L("安装需要 root 或已配置的 sudo 权限"))
                     .font(.system(size: 10)).foregroundStyle(muted)
             }.disabled(model.state.busy.contains(host.id))
+            if let tuning = check?.details?.ch341Tuning {
+                HStack {
+                    Label(tuning.message, systemImage: "speedometer")
+                        .font(.system(size: 11)).foregroundStyle(muted)
+                    Spacer()
+                    Button(L("串口加速指南")) {
+                        if let url = Bundle.main.resourceURL?.appendingPathComponent("docs/CH340-TUNING.md") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }.font(.system(size: 11))
+                }
+            }
             HStack(spacing: 10) {
                 Button(L("手动安装"), systemImage: "terminal") { manualHost = host }
                 Text(check?.state == "error" ? L("自动安装或权限检查失败时，可在终端交互授权。") : L("在终端执行安装命令，或导出脚本交给管理员。"))

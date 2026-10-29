@@ -222,9 +222,29 @@ def remote_json(server, argv, privileged=True):
     return data["result"]
 
 
+def agent_source():
+    """Release apps already contain a standalone agent; bundle source checkouts."""
+    source = HERE / "uta_server.py"
+    raw = source.read_text()
+    if "\nimport uta_ch341\n" not in raw:
+        return source
+    import uta_ch341
+    data = uta_ch341.bundle_agent(raw)
+    digest = __import__("hashlib").sha256(data.encode()).hexdigest()
+    cache = HOME / "agent-packages"
+    cache.mkdir(parents=True, exist_ok=True, mode=0o700)
+    target = cache / (digest + ".py")
+    if not target.exists() or target.read_text() != data:
+        temporary = cache / (uuid.uuid4().hex + ".tmp")
+        temporary.write_text(data)
+        temporary.chmod(0o600)
+        temporary.replace(target)
+    return target
+
+
 def manual_install_plan(server):
     """Prepare reviewable commands; never execute SSH or change the server."""
-    source = HERE / "uta_server.py"
+    source = agent_source()
     filename = "uta-agent-" + uuid.uuid4().hex + ".py"
     ssh = ["/usr/bin/ssh", "-t", "-o", "StrictHostKeyChecking=yes", "-o", "ForwardAgent=no"]
     if not server.get("use_ssh_config"):
@@ -377,7 +397,7 @@ class Controller:
                                    message="正在安装云端代理…" if install else "正在检查 SSH 和云端代理…")
         try:
             if install:
-                source = HERE / "uta_server.py"
+                source = agent_source()
                 # Upload without scp path interpolation. Installation requires existing
                 # root / noninteractive sudo rights; never modify sudoers automatically.
                 stage = f"/tmp/uta-agent-{uuid.uuid4().hex}.py"

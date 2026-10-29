@@ -3,6 +3,12 @@
 This prototype uses the documented Linux USB/IP protocol. It contains no
 VirtualHere or USB Network Gate proprietary code.
 
+- Linux 5.15 CH341 driver, GPL-2.0, complete pinned source and license in
+  `vendor/linux-ch341`. Optional server tuning builds a separate kernel module;
+  it is not linked into the Mac app. Source modifications and reproducible build
+  logic are in `python/uta_ch341.py`; no prebuilt kernel module is shipped.
+  Upstream: https://github.com/torvalds/linux/blob/v5.15/drivers/usb/serial/ch341.c
+
 - Sparkle 2.10.0, https://github.com/sparkle-project/Sparkle, permissive license
   with third-party notices in the bundled `SPARKLE_LICENSE.txt`.
   Official binary archive pinned and SHA-256 verified by `scripts/fetch-sparkle.sh`.

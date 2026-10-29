@@ -7,7 +7,7 @@ if [ "$uta_timestamp" != "none" ] && [ "$uta_timestamp" != "secure" ]; then
     exit 1
 fi
 uta_timestamp_flag=--timestamp=none
-if [ "$uta_timestamp" = "secure" ]; then uta_timestamp_flag=--timestamp; fi
+if [ "$uta_timestamp" = "secure" ]; then uta_timestamp_flag=--timestamp=http://timestamp.apple.com/ts01; fi
 if [ "$uta_sign_identity" = "-" ]; then
     if [ "${UTA_ALLOW_ADHOC:-0}" != "1" ]; then
         echo "Set UTA_SIGN_IDENTITY to a valid Developer ID identity. UI-only ad-hoc builds require UTA_ALLOW_ADHOC=1." >&2
@@ -15,11 +15,32 @@ if [ "$uta_sign_identity" = "-" ]; then
     fi
     echo "Warning: ad-hoc build is for UI/protocol development; use UTA_SIGN_IDENTITY for the macOS privileged service." >&2
 fi
+# Apple timestamp outages can be transient; retry only that error, never a
+# signing/identity failure and never fall back to an unsigned timestamp.
+uta_codesign() {
+    local uta_attempt uta_error uta_status
+    uta_error=$(mktemp /private/tmp/uta-codesign.XXXXXX)
+    for uta_attempt in 1 2 3 4; do
+        if /usr/bin/codesign "$@" 2>"$uta_error"; then
+            cat "$uta_error" >&2
+            rm -f "$uta_error"
+            return 0
+        else
+            uta_status=$?
+        fi
+        cat "$uta_error" >&2
+        if ! /usr/bin/grep -q 'timestamp service is not available' "$uta_error" || [ "$uta_attempt" = 4 ]; then
+            rm -f "$uta_error"
+            return "$uta_status"
+        fi
+        sleep 2
+    done
+}
 uta_root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$uta_root"
 mkdir -p build dist
 bash scripts/fetch-sparkle.sh
-cp python/uta_server.py dist/uta-server
+python3 scripts/build-server.py
 swift -module-cache-path "$uta_root/build/swift-cache" scripts/generate-icons.swift "$uta_root/build/branding"
 iconutil -c icns "$uta_root/build/branding/UTA.iconset" -o "$uta_root/build/branding/UTA.icns"
 cmake -S native -B build/native -DCMAKE_BUILD_TYPE=Release
@@ -40,7 +61,7 @@ swiftc -swift-version 5 -parse-as-library -O \
 swiftc -swift-version 5 -parse-as-library -O \
     -module-cache-path "$uta_root/build/swift-cache" \
     macos/USBHelperClient.swift macos/USBHelperProtocol.swift -o "$app/Contents/Resources/bin/uta-helper-client"
-codesign --force --sign "$uta_sign_identity" --options runtime "$uta_timestamp_flag" --identifier dev.uta.helper-client "$app/Contents/Resources/bin/uta-helper-client"
+uta_codesign --force --sign "$uta_sign_identity" --options runtime "$uta_timestamp_flag" --identifier dev.uta.helper-client "$app/Contents/Resources/bin/uta-helper-client"
 python3 - "$app/Contents/Resources/bin/uta-helper-client" "$stage/HelperPolicy.swift" <<'PY'
 import subprocess,re,sys
 info = subprocess.run(["codesign","-d","--verbose=4",sys.argv[1]],capture_output=True,text=True,check=True).stderr
@@ -87,6 +108,7 @@ for path in [*base.iterdir(), helper]:
 PY
 cp docs/*.md "$app/Contents/Resources/docs/"
 cp THIRD_PARTY.md "$app/Contents/Resources/licenses/"
+cp vendor/linux-ch341/LICENSE "$app/Contents/Resources/licenses/LINUX-GPL-2.0.txt"
 cp vendor/usbipdcpp/LICENSE "$app/Contents/Resources/licenses/usbipdcpp-LGPL-3.0.txt"
 cp vendor/ASIO_LICENSE.txt vendor/SPDLOG_LICENSE.txt "$app/Contents/Resources/licenses/"
 cp vendor/LIBUSB_LICENSE.txt "$app/Contents/Resources/licenses/"
@@ -102,7 +124,7 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 <key>CFBundleIconFile</key><string>UTA.icns</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>0.1.0</string>
-<key>CFBundleVersion</key><string>18</string>
+<key>CFBundleVersion</key><string>19</string>
 <key>CFBundleDevelopmentRegion</key><string>zh-Hans</string>
 <key>CFBundleLocalizations</key><array><string>zh-Hans</string><string>en</string></array>
 <key>SUFeedURL</key><string>https://raw.githubusercontent.com/TailorLiuuu/UTA/main/updates/appcast.xml</string>
@@ -119,14 +141,14 @@ chmod +x "$app/Contents/Resources/uta" "$app/Contents/Resources/bin/uta-native"
 xattr -cr "$app"
 sparkle="$app/Contents/Frameworks/Sparkle.framework/Versions/B"
 for component in "$sparkle/XPCServices/Downloader.xpc" "$sparkle/XPCServices/Installer.xpc" "$sparkle/Autoupdate" "$sparkle/Updater.app" "$app/Contents/Frameworks/Sparkle.framework"; do
-    codesign --force --sign "$uta_sign_identity" --options runtime --preserve-metadata=entitlements "$uta_timestamp_flag" "$component"
+    uta_codesign --force --sign "$uta_sign_identity" --options runtime --preserve-metadata=entitlements "$uta_timestamp_flag" "$component"
 done
 for binary in "$app/Contents/Resources/bin/"*; do
     # The helper pins this exact client's signature; never re-sign it afterwards.
-    if [ "$(basename "$binary")" != "uta-helper-client" ]; then codesign --force --sign "$uta_sign_identity" --options runtime "$uta_timestamp_flag" "$binary"; fi
+    if [ "$(basename "$binary")" != "uta-helper-client" ]; then uta_codesign --force --sign "$uta_sign_identity" --options runtime "$uta_timestamp_flag" "$binary"; fi
 done
-codesign --force --sign "$uta_sign_identity" --options runtime "$uta_timestamp_flag" --identifier dev.uta.usb-helper "$app/Contents/MacOS/UTAUSBHelper"
-codesign --force --sign "$uta_sign_identity" --options runtime "$uta_timestamp_flag" "$app"
+uta_codesign --force --sign "$uta_sign_identity" --options runtime "$uta_timestamp_flag" --identifier dev.uta.usb-helper "$app/Contents/MacOS/UTAUSBHelper"
+uta_codesign --force --sign "$uta_sign_identity" --options runtime "$uta_timestamp_flag" "$app"
 codesign --verify --deep --strict "$app"
 chmod +x dist/uta-server
 cp dist/uta-server "$stage/uta-server"

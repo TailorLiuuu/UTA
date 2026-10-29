@@ -1,5 +1,22 @@
 # Changes
 
+## Build 19 — v0.1.0-preview.7 · 2026-10-29
+
+- Add opt-in Linux 5.15 CH340 transmit-buffer tuning to the single-file server
+  CLI: status, build, enable and restore the system driver. Bundle verified GPL
+  source; no runtime source downloads, persistent install or protocol changes.
+- Refuse switching while any CH340 tty is attached, reject unknown modules and
+  unsupported kernels, verify built artifacts, and restore the system driver
+  after load failure. Kernel loading requires a full administrator root shell.
+- Show acceleration state and a bilingual setup guide in the Mac server panel.
+- Release CLI was physically tested on 3310: build, enable, idempotent enable,
+  disable/system-driver restore, and re-enable all passed. 96 Python tests,
+  3 Node tests and 309 language entries passed.
+- Physical pre-release tuning test: final 2.56 MB resume completed in 145.252 s,
+  full image CRC and preserved regions passed; write/sector-check stage averaged
+  30.0 KB/s. Prior page path was about 1.6 KB/s. Firmware functions not evaluated
+  for release. App upgrade alone does not enable Linux tuning.
+
 ## Build 18 — v0.1.0-preview.6 · 2026-10-27
 
 - Keep the active USB tunnel through transient control-SSH status failures.
