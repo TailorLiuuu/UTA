@@ -6,14 +6,14 @@ UTA 将 Mac 上选定的真实 USB 设备，通过 SSH 接入远程 Linux 服务
 服务器上的工具直接使用虚拟 USB 和对应串口，固件与编译环境留在服务器，
 无需来回下载文件到本机烧录。
 
-**当前状态：0.1 实验原型，build 19（Preview 7）。** 已完成部分开发板实机验证，尚未完成通用 USB
+**当前状态：0.1 实验原型，build 20（Preview 8）。** 已完成部分开发板实机验证，尚未完成通用 USB
 兼容性验收。当前支持 **macOS Apple Silicon → Linux**，没有 Windows 或 iOS 客户端。
 提供预编译安装包与源码。预览版已签名，但尚未经过 Apple 公证。
 
 ## 下载 Mac 预览版
 
-**[下载 DMG 安装包](https://github.com/TailorLiuuu/UTA/releases/download/v0.1.0-preview.7/UTA-0.1.0-macOS-arm64.dmg)** ·
-[Release 与 ZIP 备用包](https://github.com/TailorLiuuu/UTA/releases/tag/v0.1.0-preview.7) ·
+**[下载 DMG 安装包](https://github.com/TailorLiuuu/UTA/releases/download/v0.1.0-preview.8/UTA-0.1.0-macOS-arm64.dmg)** ·
+[Release 与 ZIP 备用包](https://github.com/TailorLiuuu/UTA/releases/tag/v0.1.0-preview.8) ·
 [首次安装指南](docs/INSTALL-macOS.md)
 
 适用于 Apple Silicon / macOS 26，需另行安装 Python 3.9+。打开 DMG，将 UTA 拖入
@@ -34,8 +34,9 @@ UTA 的职责是 **USB 接入与传输**。它不包含 ESP32、ML307H、BK7258 
 
 ## 可选 CH340 串口加速
 
-Preview 7 的云端代理提供 `tune-ch341 status|build|enable|disable`，针对 Linux 5.15
-调整 CH340 的 USB 发送缓冲。实测写入阶段约 1.6 KB/s → 30 KB/s；这是一组设备和网络结果。
+Preview 8 的云端代理提供 `tune-ch341 status|build|enable|disable`，针对 Linux 5.15
+将 CH340 的 USB 接收与发送缓冲均设为 4096 字节，修复高速读回数据不完整的问题。
+官方 BK7259 CLI 经 UTA 完成约 4.59 MB 烧录，用时约 2 分 43 秒；这是特定设备和网络的实测结果。
 **升级 Mac App 后仍需更新云端代理并由管理员显式启用，服务器重启后需重新启用。**
 设备接入中会拒绝切换；系统原驱动保留。详见 [启用、恢复及限制](docs/CH340-TUNING.md)。
 

@@ -19,7 +19,7 @@ import tempfile
 SOURCE_SHA256 = '0568953df7e73445ca16e21e685a8c06a3c33891e6976be34e28f6eee7cd1912'
 SOURCE_GZIP_B64 = ''  # Filled by scripts/build-server.py; no runtime downloads.
 MODULE = 'ch341_uta'
-REVISION = 'uta-preview7'
+REVISION = 'uta-ch341-rx1'
 STORE = Path('/var/lib/uta-ch341')
 SYS_MODULE = Path('/sys/module')
 SERIAL_DRIVER = Path('/sys/bus/usb-serial/drivers/ch341-uart')
@@ -41,9 +41,11 @@ def status():
     kernel = platform.release()
     loaded = (SYS_MODULE / MODULE).exists()
     managed = (read(SYS_MODULE / MODULE / 'version') == REVISION and
+               read(SYS_MODULE / MODULE / 'parameters/uta_bulk_in_bytes') == '4096' and
                read(SYS_MODULE / MODULE / 'parameters/uta_bulk_out_bytes') == '4096')
     state = 'enabled' if loaded and managed else ('external_driver' if loaded else 'disabled')
     return dict(state=state, kernel=kernel, supported=supported(kernel),
+                bulk_in_bytes=4096 if loaded and managed else None,
                 bulk_out_bytes=4096 if loaded and managed else None,
                 build_available=(Path('/lib/modules') / kernel / 'build/Makefile').is_file(),
                 ports=sorted(p.name for p in SERIAL_DRIVER.glob('ttyUSB*')),
@@ -77,7 +79,12 @@ def source():
     needle = '\t.num_ports         = 1,'
     if text.count(needle) != 1:
         raise RuntimeError('Unexpected CH341 source layout')
-    text = text.replace(needle, needle + '\n\t.bulk_out_size     = 4096, /* USB/IP: amortize network round trips */')
+    text = text.replace(needle, needle +
+                        '\n\t.bulk_in_size      = 4096, /* USB/IP: drain UART bursts locally */' +
+                        '\n\t.bulk_out_size     = 4096, /* USB/IP: amortize network round trips */')
+    text += '\nstatic unsigned int uta_bulk_in_bytes = 4096;\n'
+    text += 'module_param(uta_bulk_in_bytes, uint, 0444);\n'
+    text += 'MODULE_PARM_DESC(uta_bulk_in_bytes, "Fixed USB/IP receive buffer; read only");\n'
     text += '\nstatic unsigned int uta_bulk_out_bytes = 4096;\n'
     text += 'module_param(uta_bulk_out_bytes, uint, 0444);\n'
     text += 'MODULE_PARM_DESC(uta_bulk_out_bytes, "Fixed USB/IP transmit buffer; read only");\n'

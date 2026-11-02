@@ -41,7 +41,9 @@ class TuningTests(unittest.TestCase):
         with patch.object(tune, 'SOURCE_GZIP_B64', blob):
             self.assertEqual(tune.source(), expected)
         self.assertIn('.bulk_out_size     = 4096,', expected)
-        self.assertIn('MODULE_VERSION("uta-preview7")', expected)
+        self.assertIn('.bulk_in_size      = 4096,', expected)
+        self.assertIn('MODULE_VERSION("uta-ch341-rx1")', expected)
+        self.assertIn('module_param(uta_bulk_in_bytes, uint, 0444)', expected)
         with patch.object(tune, 'SOURCE_GZIP_B64', base64.b64encode(gzip.compress(b'wrong source')).decode()):
             with self.assertRaisesRegex(RuntimeError, 'checksum'): tune.source()
 
@@ -52,8 +54,19 @@ class TuningTests(unittest.TestCase):
                 self.assertEqual(tune.status()['state'],'external_driver')
                 (module/'version').write_text(tune.REVISION)
                 (module/'parameters/uta_bulk_out_bytes').write_text('4096')
+                # OUT-only drivers must not claim that receive tuning is active.
+                self.assertEqual(tune.status()['state'],'external_driver')
+                self.assertIsNone(tune.status()['bulk_in_bytes'])
+                (module/'parameters/uta_bulk_in_bytes').write_text('4096')
                 self.assertEqual(tune.status()['state'],'enabled')
+                self.assertEqual(tune.status()['bulk_in_bytes'],4096)
+                (module/'parameters/uta_bulk_in_bytes').write_text('32')
+                self.assertEqual(tune.status()['state'],'external_driver')
+                (module/'parameters/uta_bulk_in_bytes').write_text('4096')
                 (module/'parameters/uta_bulk_out_bytes').write_text('32')
+                self.assertEqual(tune.status()['state'],'external_driver')
+                (module/'parameters/uta_bulk_out_bytes').write_text('4096')
+                (module/'version').write_text('uta-preview7')
                 self.assertEqual(tune.status()['state'],'external_driver')
 
     def test_active_ports_and_lockdown_block_enable(self):

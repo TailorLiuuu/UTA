@@ -18,7 +18,7 @@ import sys
 import time
 import uta_ch341
 
-VERSION = "0.1.0-preview.7"
+VERSION = "0.1.0-preview.8"
 VHCI = Path("/sys/devices/platform/vhci_hcd.0")
 STATE = Path("/run/uta")
 # Keep existing live session records accessible when upgrading an older agent.

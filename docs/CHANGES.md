@@ -1,5 +1,20 @@
 # Changes
 
+## Build 20 — v0.1.0-preview.8 · 2026-11-02
+
+- Increase both CH340 USB/IP receive and transmit buffers to 4096 bytes. Verify
+  both read-only module parameters before reporting receive tuning as enabled;
+  older OUT-only modules cannot be mistaken for the fixed driver.
+- Document upgrading the Linux agent/driver and using the original BK7259 CLI's
+  timing configuration. Chip protocols and firmware remain outside UTA.
+- Physical validation: three matching 64 KiB reads and one complete 4.59 MB
+  download with the official CLI at 921600 baud, taking 162.84 seconds. Official
+  success, restored Flash protection and extra first/last readback passed.
+  Firmware functions and universal USB compatibility were not evaluated.
+- Remove private test identifiers from documentation and map local build paths
+  to neutral prefixes in compiled code. Test firmware, raw logs, SSH settings
+  and credentials are excluded from the release.
+
 ## Build 19 — v0.1.0-preview.7 · 2026-10-29
 
 - Add opt-in Linux 5.15 CH340 transmit-buffer tuning to the single-file server
@@ -9,7 +24,7 @@
   unsupported kernels, verify built artifacts, and restore the system driver
   after load failure. Kernel loading requires a full administrator root shell.
 - Show acceleration state and a bilingual setup guide in the Mac server panel.
-- Release CLI was physically tested on 3310: build, enable, idempotent enable,
+- Release CLI was physically tested on a Linux test server: build, enable, idempotent enable,
   disable/system-driver restore, and re-enable all passed. 96 Python tests,
   3 Node tests and 309 language entries passed.
 - Physical pre-release tuning test: final 2.56 MB resume completed in 145.252 s,

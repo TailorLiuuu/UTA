@@ -55,10 +55,12 @@ mkdir -p "$app/Contents/Resources/docs" "$app/Contents/Resources/licenses"
 mkdir -p "$app/Contents/Frameworks"
 ditto --norsrc build/sparkle/Sparkle.framework "$app/Contents/Frameworks/Sparkle.framework"
 swiftc -swift-version 5 -parse-as-library -O \
+    -file-prefix-map "$uta_root=/uta-src" -file-prefix-map "$stage=/uta-build" \
     -module-cache-path "$uta_root/build/swift-cache" \
     -F "$app/Contents/Frameworks" -framework Sparkle -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
     macos/UTA.swift macos/DeviceListPolicy.swift macos/Localization.swift macos/AppSettings.swift macos/AppUpdate.swift macos/USBPermission.swift macos/USBHelperProtocol.swift -o "$app/Contents/MacOS/UTA"
 swiftc -swift-version 5 -parse-as-library -O \
+    -file-prefix-map "$uta_root=/uta-src" -file-prefix-map "$stage=/uta-build" \
     -module-cache-path "$uta_root/build/swift-cache" \
     macos/USBHelperClient.swift macos/USBHelperProtocol.swift -o "$app/Contents/Resources/bin/uta-helper-client"
 uta_codesign --force --sign "$uta_sign_identity" --options runtime "$uta_timestamp_flag" --identifier dev.uta.helper-client "$app/Contents/Resources/bin/uta-helper-client"
@@ -70,6 +72,7 @@ with open(sys.argv[2],"w") as f:
     f.write('let utaHelperClientRequirement = "cdhash H\\\"'+digest+'\\\""\n')
 PY
 swiftc -swift-version 5 -parse-as-library -O \
+    -file-prefix-map "$uta_root=/uta-src" -file-prefix-map "$stage=/uta-build" \
     -module-cache-path "$uta_root/build/swift-cache" \
     macos/USBHelper.swift macos/USBHelperProtocol.swift "$stage/HelperPolicy.swift" \
     "$uta_root/build/native/libuta_capture.a" "$(pkg-config --variable=libdir libusb-1.0)/libusb-1.0.a" \
@@ -124,7 +127,7 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 <key>CFBundleIconFile</key><string>UTA.icns</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>0.1.0</string>
-<key>CFBundleVersion</key><string>19</string>
+<key>CFBundleVersion</key><string>20</string>
 <key>CFBundleDevelopmentRegion</key><string>zh-Hans</string>
 <key>CFBundleLocalizations</key><array><string>zh-Hans</string><string>en</string></array>
 <key>SUFeedURL</key><string>https://raw.githubusercontent.com/TailorLiuuu/UTA/main/updates/appcast.xml</string>
