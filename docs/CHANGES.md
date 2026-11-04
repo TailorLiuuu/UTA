@@ -1,5 +1,11 @@
 # Changes
 
+## Build 21 — v0.1.0-preview.9 · 2026-11-04
+
+- macOS USB 列表只读取 IOKit 系统缓存，不初始化 libusb、不打开 USB 或串口，避免后台刷新短暂申请独占访问。
+- 修复 USB Hub 下设备占用诊断漏报，按系统注册节点区分同型号设备。
+- 手动接入、自动重连前重新检查串口占用；云端检查期间端口被本地程序打开也停止接管。
+
 ## Build 20 — v0.1.0-preview.8 · 2026-11-02
 
 - Increase both CH340 USB/IP receive and transmit buffers to 4096 bytes. Verify

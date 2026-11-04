@@ -39,6 +39,24 @@ class DiagnosticsTests(unittest.TestCase):
         self.assertEqual(result["ports"], [])
         run.assert_not_called()
 
+    def test_hub_children_are_matched_without_mistaking_interfaces_for_devices(self):
+        board = dict(self.node, IOObjectClass="IOUSBHostDevice", IORegistryEntryID=101)
+        interface = dict(self.node, IOObjectClass="IOUSBHostInterface", IORegistryEntryID=102)
+        board["IORegistryEntryChildren"] = self.node["IORegistryEntryChildren"] + [interface]
+        hub = dict(idVendor=0x1234, idProduct=1, IORegistryEntryChildren=[board])
+        # Some ioreg versions repeat a descendant as a separate result root.
+        with patch.object(diag.subprocess, "run", return_value=SimpleNamespace(returncode=1, stdout="", stderr="")):
+            result = diag.inspect_device(self.device, [hub, board])
+        self.assertEqual(result["state"], "driver_bound")
+        self.assertIn("/dev/cu.usbmodem1", result["ports"])
+
+    def test_registry_identity_distinguishes_identical_boards_and_fails_closed_after_replug(self):
+        a = dict(self.node, IORegistryEntryID=101, locationID=0x14100000)
+        b = dict(self.node, IORegistryEntryID=102, locationID=0x14200000)
+        self.assertIs(diag.match_device(dict(self.device, registry_id=102), [a, b]), b)
+        self.assertIsNone(diag.match_device(dict(self.device, registry_id=103), [a, b]))
+        self.assertIs(diag.match_device(dict(self.device, location_id=0x14100000), [a, b]), a)
+
     def test_lsof_records_only_requested_ports_and_processes(self):
         text = "p234\ncserial-monitor\nu501\nf3\nn/dev/cu.usbmodem1\np999\ncother\nu0\nn/dev/other\n"
         with patch.object(diag.subprocess, "run", return_value=SimpleNamespace(returncode=0, stdout=text, stderr="")):

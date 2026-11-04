@@ -10,6 +10,9 @@
 #include <unistd.h>
 #include <sys/socket.h>
 #include <regex>
+#ifdef __APPLE__
+#include "macos_inventory.h"
+#endif
 
 static volatile sig_atomic_t stopped = 0;
 static void stop_signal(int) { stopped = 1; }
@@ -35,6 +38,33 @@ static std::string usb_string(libusb_device_handle *h, uint8_t index) {
 int main(int argc, char **argv) {
     spdlog::set_default_logger(spdlog::stderr_logger_mt("uta"));
     spdlog::set_level(spdlog::level::info);
+#ifdef __APPLE__
+    // Even libusb_init can open devices while caching descriptors on Darwin.
+    // Inventory must return before initializing libusb, not merely skip claims.
+    if (argc == 2 && std::string(argv[1]) == "list") {
+        try {
+            auto devices = macos_usb_inventory();
+            std::cout << "[";
+            bool first = true;
+            for (const auto &d : devices) {
+                if (!first) std::cout << ",";
+                first = false;
+                std::cout << "{\"busid\":" << json_quote(d.busid)
+                    << ",\"name\":" << json_quote(d.name)
+                    << ",\"manufacturer\":" << json_quote(d.manufacturer)
+                    << ",\"serial\":" << json_quote(d.serial)
+                    << ",\"vidpid\":" << json_quote(d.vidpid)
+                    << ",\"class\":" << d.device_class << ",\"speed\":" << d.speed
+                    << ",\"registry_id\":" << d.registry_id << ",\"location_id\":" << d.location << "}";
+            }
+            std::cout << "]\n";
+            return 0;
+        } catch (const std::exception &e) {
+            std::cerr << e.what() << "\n";
+            return 1;
+        }
+    }
+#endif
     if (libusb_init(nullptr) != 0) {
         std::cerr << "libusb initialization failed\n";
         return 1;

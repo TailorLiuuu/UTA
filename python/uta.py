@@ -585,7 +585,11 @@ class Controller:
                     reconnect_attempts=old.get("reconnect_attempts", 0) if automatic else 0,
                     reconnect_retry_at=time.time() + 5)
                 session = self.sessions[busid]["session"]
-            access_state = (device.get("access") or {}).get("state")
+            # Cached UI diagnostics may be ten seconds old. A local serial
+            # monitor could have opened the port since then, including during
+            # an automatic reconnect. Recheck without opening the USB device.
+            access = inspect_devices([device]).get(busid, {})
+            access_state = access.get("state")
             if access_state == "process_busy":
                 raise RuntimeError("串口正被其他程序打开。请查看设备占用信息并关闭对应连接后重试；UTA 不会强制终止该程序。")
             needs_capture = access_state == "driver_bound"
@@ -603,6 +607,8 @@ class Controller:
             check = remote_json(server, ["doctor"])
             if not check.get("root") or not check.get("vhci_available"):
                 raise RuntimeError("云端尚未就绪，请先安装代理并加载 vhci_hcd")
+            if inspect_devices([device]).get(busid, {}).get("state") == "process_busy":
+                raise RuntimeError("串口正被其他程序打开。请查看设备占用信息并关闭对应连接后重试；UTA 不会强制终止该程序。")
             native_log = HOME / "logs" / f"{session}-usb.log"
             ssh_log = HOME / "logs" / f"{session}-ssh.log"
             self.update(busid, log=str(native_log), ssh_log=str(ssh_log),
@@ -740,7 +746,7 @@ class Controller:
         while not self.stopping.is_set():
             try:
                 devices = json.loads(run([str(NATIVE), "list"], timeout=8))
-                identities = [(d["busid"], d["vidpid"], d.get("serial")) for d in devices]
+                identities = [(d["busid"], d["vidpid"], d.get("serial"), d.get("registry_id")) for d in devices]
                 if identities != self.diagnostic_devices or time.monotonic() - self.last_diagnostics > 10:
                     self.diagnostics = inspect_devices(devices)
                     self.diagnostic_devices = identities

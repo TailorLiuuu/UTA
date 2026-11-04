@@ -55,7 +55,8 @@ class PermissionTests(unittest.TestCase):
             host = uta.validate_server(dict(name="lab", target="lab"))
             controller.devices = [dict(busid="2-1", name="ESP", vidpid="303a:1001",
                                        access=dict(state="driver_bound"))]
-            with patch.object(uta_privileged, "status", return_value=dict(available=False)), \
+            with patch.object(uta, "inspect_devices", return_value={"2-1": dict(state="driver_bound")}), \
+                 patch.object(uta_privileged, "status", return_value=dict(available=False)), \
                  patch.object(uta.subprocess, "Popen") as launch, patch.object(uta, "remote_json") as remote:
                 controller.connect("2-1", host)
             self.assertEqual(controller.sessions["2-1"]["state"], "permission_required")
@@ -75,8 +76,9 @@ class PermissionTests(unittest.TestCase):
             controller = uta.Controller()
             host = uta.validate_server(dict(name="lab", target="lab"))
             controller.devices = [dict(busid="2-1", name="ESP", vidpid="303a:1001",
-                                       access=dict(state="process_busy"))]
-            with patch.object(uta_privileged, "status") as permission, \
+                                       access=dict(state="no_owner_detected"))]
+            with patch.object(uta, "inspect_devices", return_value={"2-1": dict(state="process_busy")}), \
+                 patch.object(uta_privileged, "status") as permission, \
                  patch.object(uta.subprocess, "Popen") as launch, patch.object(uta, "remote_json") as remote:
                 controller.connect("2-1", host, access_mode="authorized")
             self.assertEqual(controller.sessions["2-1"]["state"], "error")
@@ -84,6 +86,20 @@ class PermissionTests(unittest.TestCase):
             permission.assert_not_called()
             launch.assert_not_called()
             remote.assert_not_called()
+
+    def test_serial_opened_during_server_check_is_not_exported(self):
+        with tempfile.TemporaryDirectory() as home, patch.object(uta, "HOME", Path(home)), \
+             patch.object(threading.Thread, "start"):
+            controller = uta.Controller()
+            host = uta.validate_server(dict(name="lab", target="lab"))
+            controller.devices = [dict(busid="2-1", name="serial", vidpid="1200:0001")]
+            with patch.object(uta, "inspect_devices", side_effect=[
+                    {"2-1": dict(state="no_owner_detected")}, {"2-1": dict(state="process_busy")}]), \
+                 patch.object(uta.subprocess, "Popen") as launch, \
+                 patch.object(uta, "remote_json", return_value=dict(root=True, vhci_available=True)):
+                controller.connect("2-1", host)
+            launch.assert_not_called()
+            self.assertIn("其他程序", controller.sessions["2-1"]["message"])
 
 
 class ConnectedStreamTests(unittest.TestCase):

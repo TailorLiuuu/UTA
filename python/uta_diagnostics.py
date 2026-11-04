@@ -11,8 +11,25 @@ def walk(node):
 
 
 def match_device(device, roots):
-    candidates = [r for r in roots
+    # ioreg -r returns complete hub subtrees. Only physical device nodes count;
+    # interfaces and drivers also repeat VID/PID and sometimes serial strings.
+    nodes, seen = [], set()
+    for root in roots:
+        for node in walk(root):
+            if node is not root and node.get("IOObjectClass") not in ("IOUSBHostDevice", "IOUSBDevice"):
+                continue
+            identity = node.get("IORegistryEntryID")
+            if identity is not None:
+                if identity in seen:
+                    continue
+                seen.add(identity)
+            nodes.append(node)
+    candidates = [r for r in nodes
                   if f'{r.get("idVendor", 0):04x}:{r.get("idProduct", 0):04x}' == device["vidpid"]]
+    if device.get("registry_id") is not None:
+        candidates = [r for r in candidates if r.get("IORegistryEntryID") == device["registry_id"]]
+    elif device.get("location_id") is not None:
+        candidates = [r for r in candidates if r.get("locationID") == device["location_id"]]
     if device.get("serial"):
         candidates = [r for r in candidates
                       if r.get("USB Serial Number", r.get("kUSBSerialNumberString")) == device["serial"]]
