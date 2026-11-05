@@ -19,14 +19,27 @@ class TuningTests(unittest.TestCase):
         agent=tune.bundle_agent((ROOT/'python/uta_server.py').read_text())
         namespace={'__name__':'bundle_test'}
         exec(compile(agent,'<test bundled agent>','exec'),namespace)
-        self.assertEqual(namespace['uta_ch341'].source(),tune.source())
+        for kernel in ('5.4.0-162-generic', '5.15.0-173-generic'):
+            self.assertEqual(namespace['uta_ch341'].source(kernel),tune.source(kernel))
         self.assertIn('ch341_tuning',namespace['doctor']())
 
     def test_kernel_scope_is_bounded(self):
-        for kernel in ('5.15.0-173-generic', '5.15.0-198-generic'):
+        for kernel in ('5.4.0-162-generic', '5.4.290-custom', '5.15.0-173-generic', '5.15.0-198-generic'):
             self.assertTrue(tune.supported(kernel))
-        for kernel in ('6.8.0-1', '5.4.0-generic', '../../x', '5.15.0-x/../../x', '5.15.0-x\n'):
+        for kernel in ('6.8.0-1', '5.10.0-generic', '5.40.0-generic', '../../x', '5.4.0-x/../../x', '5.15.0-x/../../x', '5.15.0-x\n'):
             self.assertFalse(tune.supported(kernel))
+
+    def test_kernel54_uses_integer_remove_adapter_without_changing_515(self):
+        text = tune.source('5.4.0-162-generic')
+        self.assertIn('static int uta_ch341_port_remove_54(', text)
+        self.assertIn('ch341_port_remove(port);\n\treturn 0;', text)
+        self.assertIn('.port_remove       = uta_ch341_port_remove_54,', text)
+        self.assertIn('.bulk_in_size      = 4096,', text)
+        self.assertIn('.bulk_out_size     = 4096,', text)
+        modern = tune.source('5.15.0-173-generic')
+        self.assertEqual(modern, tune.source())
+        self.assertNotIn('uta_ch341_port_remove_54', modern)
+        with self.assertRaisesRegex(RuntimeError, 'Unsupported'): tune.source('6.8.0-1')
 
     def test_privilege_is_not_inherited_from_delegated_sudo(self):
         with patch.object(tune.os, 'geteuid', return_value=0), patch.dict(os.environ, SUDO_UID='1000'):

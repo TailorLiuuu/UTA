@@ -18,7 +18,7 @@ import sys
 import time
 import uta_ch341
 
-VERSION = "0.1.0-preview.8"
+VERSION = "0.1.0-preview.12"
 VHCI = Path("/sys/devices/platform/vhci_hcd.0")
 STATE = Path("/run/uta")
 # Keep existing live session records accessible when upgrading an older agent.
@@ -246,7 +246,7 @@ def main():
     parser = argparse.ArgumentParser(prog="uta-server", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("doctor")
-    tune = sub.add_parser("tune-ch341", help="Opt-in Linux 5.15 CH340 USB/IP throughput tuning")
+    tune = sub.add_parser("tune-ch341", help="Opt-in Linux 5.4/5.15 CH340 USB/IP throughput tuning")
     tune.add_argument("action", choices=("status", "build", "enable", "disable"))
     sub.add_parser("list")
     status = sub.add_parser("status")

@@ -6,14 +6,14 @@ UTA 将 Mac 上选定的真实 USB 设备，通过 SSH 接入远程 Linux 服务
 服务器上的工具直接使用虚拟 USB 和对应串口，固件与编译环境留在服务器，
 无需来回下载文件到本机烧录。
 
-**当前状态：0.1 实验原型，build 23（Preview 11）。** 已完成部分开发板实机验证，尚未完成通用 USB
+**当前状态：0.1 实验原型，build 24（Preview 12）。** 已完成部分开发板实机验证，尚未完成通用 USB
 兼容性验收。当前支持 **macOS Apple Silicon → Linux**，没有 Windows 或 iOS 客户端。
 提供预编译安装包与源码。预览版已签名，但尚未经过 Apple 公证。
 
 ## 下载 Mac 预览版
 
-**[下载 DMG 安装包](https://github.com/TailorLiuuu/UTA/releases/download/v0.1.0-preview.11/UTA-0.1.0-macOS-arm64.dmg)** ·
-[Release 与 ZIP 备用包](https://github.com/TailorLiuuu/UTA/releases/tag/v0.1.0-preview.11) ·
+**[下载 DMG 安装包](https://github.com/TailorLiuuu/UTA/releases/download/v0.1.0-preview.12/UTA-0.1.0-macOS-arm64.dmg)** ·
+[Release 与 ZIP 备用包](https://github.com/TailorLiuuu/UTA/releases/tag/v0.1.0-preview.12) ·
 [首次安装指南](docs/INSTALL-macOS.md)
 
 适用于 Apple Silicon / macOS 26，需另行安装 Python 3.9+。打开 DMG，将 UTA 拖入
@@ -37,6 +37,8 @@ Preview 9 修复未接入设备的后台扫描占用：macOS 列表只读取系�
 Preview 10 在服务器页面提示云端 CLI 更新，显示云端与本机自带版本；点击后才安装并校验，设备使用中需先断开。Mac 升级不会自动覆盖云端代理。详见 [更新说明](docs/UPDATES.md)。
 
 Preview 11 禁止跨服务器抢占已分配的 USB：其他服务器页面不可选；需先断开原连接并等待清理完成，再分配到新服务器。等待重连期间也保持原归属，CLI 遵循相同限制。
+
+Preview 12 将可选 CH340/CH341 加速扩展至 Linux 5.4，保留 5.15 支持。已验证 5.4 驱动加载与真实 USB 接入；本次未验证烧录吞吐或日志完整性。需要显式更新云端 CLI 并启用加速，Mac 更新不自动修改服务器内核或驱动。
 
 ## 可选 CH340 串口加速
 

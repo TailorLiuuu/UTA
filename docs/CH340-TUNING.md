@@ -7,6 +7,21 @@ Preview 7 已发布安装包只有 OUT 调优，不能据此判断高速读回�
 小接收缓冲跨网络补交请求不及时，会使 UART 突发响应丢字节；此问题不能仅靠增加烧录工具超时解决。
 修正仍属于通用 USB 串口驱动调优，不包含任何芯片的烧录协议。
 
+## Linux 5.4 兼容（Preview 12 / Build 24）
+
+Preview 12 额外支持 Linux 5.4，仍使用固定哈希的 Linux 5.15 上游 CH341 源码。
+5.4 的 `usb_serial_driver.port_remove` 要求返回 `int`，生成驱动时加入适配回调，
+执行原清理函数后返回 0；5.15 的生成源码保持不变。双向缓冲仍为 4096 字节。
+构建必须使用目标正在运行的内核头文件；不升级内核、不覆盖系统驱动、不写开机加载配置。
+
+已在 Ubuntu 20.04 / `5.4.0-162-generic` 完成编译、加载、参数读取、重复启用、
+恢复系统驱动及再次启用。原系统驱动文件 SHA-256 保持一致。随后已通过真实 CH340 的 UTA 接入、驱动绑定与 30 秒连接观察；
+尚未验证串口数据收发、烧录吞吐或日志完整性，其他 5.4 发行版仍需分别验证。
+详见 [5.4 验证记录](CH341-KERNEL54-VALIDATION.md)。
+
+此支持需要更新云端代理；仅升级 Mac App 不会自动安装或启用加速模块。
+本次 Release 不包含服务器虚拟 USB 端口扩容模块。
+
 ## 为什么需要
 
 Linux CH341 驱动默认使用 USB 端点大小作为发送缓冲。测试设备的端点是 32 字节，跨网络时大量小传输反复等待往返。把波特率从 115200 提高到 921600，仍只有约 1.6–1.8 KB/s。将驱动 bulk OUT 缓冲改为 4096 后，外部工具的 4 KiB 写入成功，实测写入阶段平均约 30 KB/s。USB 包大小、设备协议和固件都不因此改变。
@@ -83,6 +98,6 @@ UTA 不会识别设备型号、自动修改烧录参数或注入协议命令。
 
 ## English quick start
 
-Optional, session-only CH340/CH341 USB/IP transmit-buffer tuning. Preview support: Linux 5.15; physically tested on Ubuntu 5.15.0-173-generic. Update the server agent separately from the Mac app. Run `uta-server tune-ch341 status`, then `build` in an administrator root shell with matching kernel headers and build tools installed. If entering via `sudo -i`, run `unset SUDO_UID` inside that authorized root shell first. Delegated agent-only sudo is intentionally insufficient for kernel module loading.
+Optional, session-only CH340/CH341 USB/IP transmit-buffer tuning. Preview 12 supports Linux 5.4 and 5.15; physically tested on Ubuntu 5.15.0-173-generic. Update the server agent separately from the Mac app. Run `uta-server tune-ch341 status`, then `build` in an administrator root shell with matching kernel headers and build tools installed. If entering via `sudo -i`, run `unset SUDO_UID` inside that authorized root shell first. Delegated agent-only sudo is intentionally insufficient for kernel module loading.
 
 Disconnect **all** CH340/CH341 devices, run `enable`, verify `state: enabled`, and reconnect. `disable` restores the system driver after disconnecting all matching devices. Reboot loses the tuning; no DKMS, startup installation, or original module replacement is performed. Secure Boot/lockdown and other kernel versions may not support this unsigned preview module. The original flashing application still supplies the device protocol and should use its large-block/high-baud mode. The measured ~30 KB/s is one hardware/network result, not a universal guarantee.

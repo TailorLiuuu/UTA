@@ -1,6 +1,6 @@
 """Opt-in CH340 USB/IP throughput tuning; never interprets device firmware.
 
-Builds the pinned GPL-2.0 driver for the running Linux 5.15 kernel. Loading is
+Builds the pinned GPL-2.0 driver for Linux 5.4 or 5.15. Loading is
 session-only and requires all CH340 ports disconnected and a real root login.
 """
 import base64
@@ -27,7 +27,7 @@ ENV = dict(PATH='/usr/sbin:/usr/bin:/sbin:/bin', LANG='C', LC_ALL='C')
 
 
 def supported(kernel):
-    return bool(re.fullmatch(r'5\.15\.[0-9]+-[A-Za-z0-9._+-]+', kernel))
+    return bool(re.fullmatch(r'5\.(?:4|15)\.[0-9]+-[A-Za-z0-9._+-]+', kernel))
 
 
 def read(path):
@@ -70,12 +70,25 @@ def run(argv, timeout=30):
     return result.stdout.strip()
 
 
-def source():
+def source(kernel=None):
+    if kernel is not None and not supported(kernel):
+        raise RuntimeError('Unsupported CH341 source target; expected Linux 5.4 or 5.15')
     raw = (gzip.decompress(base64.b64decode(SOURCE_GZIP_B64)) if SOURCE_GZIP_B64 else
            (Path(__file__).resolve().parents[1] / 'vendor/linux-ch341/ch341.c').read_bytes())
     if hashlib.sha256(raw).hexdigest() != SOURCE_SHA256:
         raise RuntimeError('CH341 source checksum mismatch')
     text = raw.decode()
+    if kernel is not None and kernel.startswith('5.4.'):
+        # 5.4 usb_serial_driver.port_remove returns int; the pinned 5.15
+        # implementation returns void. Preserve its cleanup and adapt the ABI.
+        anchor = 'static struct usb_serial_driver ch341_device = {'
+        callback = '\t.port_remove       = ch341_port_remove,'
+        if text.count(anchor) != 1 or text.count(callback) != 1:
+            raise RuntimeError('Unexpected CH341 remove callback layout')
+        wrapper = ('static int uta_ch341_port_remove_54(struct usb_serial_port *port)\n'
+                   '{\n\tch341_port_remove(port);\n\treturn 0;\n}\n\n')
+        text = text.replace(anchor, wrapper + anchor).replace(
+            callback, '\t.port_remove       = uta_ch341_port_remove_54,')
     needle = '\t.num_ports         = 1,'
     if text.count(needle) != 1:
         raise RuntimeError('Unexpected CH341 source layout')
@@ -113,7 +126,7 @@ def store():
 def require_supported():
     kernel = platform.release()
     if not supported(kernel):
-        raise RuntimeError('This preview supports Linux 5.15 only; leave other kernels on their system driver')
+        raise RuntimeError('This preview supports Linux 5.4 and 5.15 only; leave other kernels on their system driver')
     return kernel
 
 
@@ -129,7 +142,7 @@ def build():
     # Fixed private build directory, trusted source and kernel headers only.
     work = Path(tempfile.mkdtemp(prefix='build-', dir=base))
     try:
-        (work / 'ch341_uta.c').write_text(source())
+        (work / 'ch341_uta.c').write_text(source(kernel))
         (work / 'Makefile').write_text('obj-m += ch341_uta.o\n')
         run(['/usr/bin/make', '-s', '-C', str(headers), f'M={work}', 'modules'], timeout=600)
         binary = work / 'ch341_uta.ko'
@@ -242,7 +255,9 @@ def dispatch(action):
 
 def bundle_agent(agent):
     """Build a single-file agent for both source CLI uploads and releases."""
-    source()  # Verify the pinned upstream source before packaging.
+    # Validate both generated variants before packaging the pinned source.
+    for kernel in ('5.4.0-0-generic', '5.15.0-0-generic'):
+        source(kernel)
     raw = (Path(__file__).resolve().parents[1] / 'vendor/linux-ch341/ch341.c').read_bytes()
     blob = base64.b64encode(gzip.compress(raw, mtime=0)).decode()
     module = Path(__file__).read_text().replace("SOURCE_GZIP_B64 = ''", 'SOURCE_GZIP_B64 = ' + repr(blob), 1)
