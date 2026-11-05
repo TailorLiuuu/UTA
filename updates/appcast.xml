@@ -4,17 +4,17 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
   <channel>
     <title>UTA macOS updates</title>
     <item>
-      <title>UTA v0.1.0-preview.9 · build 21</title>
-      <pubDate>Wed, 04 Nov 2026 08:47:09 +0000</pubDate>
-      <sparkle:version>21</sparkle:version>
-      <sparkle:shortVersionString>0.1.0-preview.9</sparkle:shortVersionString>
+      <title>UTA v0.1.0-preview.10 · build 22</title>
+      <pubDate>Thu, 05 Nov 2026 06:47:41 +0000</pubDate>
+      <sparkle:version>22</sparkle:version>
+      <sparkle:shortVersionString>0.1.0-preview.10</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
       <description>在 UTA 内检查更新、下载、验证并安装。请先断开 USB 并等待清理完成。</description>
-      <link>https://github.com/TailorLiuuu/UTA/releases/tag/v0.1.0-preview.9</link>
-      <enclosure url="https://github.com/TailorLiuuu/UTA/releases/download/v0.1.0-preview.9/UTA-0.1.0-macOS-arm64.dmg" length="2926168" type="application/octet-stream" sparkle:edSignature="ORlDonroGGt0+IwbKeeYw65XW9ubIZrI3YblRDoh2bvsy/k+gqAdn6KIxliJHxUBzt9e3w6krjYDVt1ucomgCQ=="></enclosure>
+      <link>https://github.com/TailorLiuuu/UTA/releases/tag/v0.1.0-preview.10</link>
+      <enclosure url="https://github.com/TailorLiuuu/UTA/releases/download/v0.1.0-preview.10/UTA-0.1.0-macOS-arm64.dmg" length="2944127" type="application/octet-stream" sparkle:edSignature="nn9lviqYgkMkB0SYEEYnIbIduk2jTnHjg63GxpQc+He4jdtUwNl+yKN2sy/f4aiIT+9UdrObU3pft1J2W/YbAg=="></enclosure>
     </item>
   </channel>
 </rss><!-- sparkle-signatures:
-edSignature: F40X6dbqmAktEGG7iFR+DDbylKF0g9zfMgSpKu7bE53WeyFtrjsJ7x/S1stpcxUjldo0XPQBR6POBkmmhkH3Dw==
-length: 1280
+edSignature: DpUTBQEZ8Te1leMgk6SzyBtl91Neke0hP7O6K0a71rD1ubmRtcSXU07unM+8VTRo21t2J0VJTHqk4JuQEOC9Dg==
+length: 1284
 -->
