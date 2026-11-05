@@ -144,7 +144,6 @@
   "释放所选": "Release selected",
   "接入 {0}": "Connect to {0}",
   "选择 {0}": "Select {0}",
-  "当前分配给 {0}；接入将先释放旧连接。": "Currently assigned to {0}. Connecting will release the previous connection first.",
   "已接入 {0}": "Connected to {0}",
   "从本地 USB，到云端开发环境": "From local USB to your cloud workspace",
   "1. 在终端通过 SSH 登录服务器，确认指纹并配置密钥。\n\n2. 从 SSH 配置导入服务器，点击「安装云端代理」。Linux 需要 vhci_hcd；安装和挂载需要管理员权限。\n\n3. 选择侧栏服务器，勾选开发板并点击「接入」。只有显示「云端已挂载」后，再开始烧录。\n\n4. 在远程开发会话运行 sudo uta-server list 查询设备，随后使用原来的烧录工具。": "1. Sign in via SSH in Terminal. Verify the server fingerprint and configure key authentication.\n\n2. Import a server from SSH configuration and click Install remote agent. Linux requires vhci_hcd; installation and attachment need administrator privileges.\n\n3. Select a server, select your board, and click Connect. Start flashing only after Mounted remotely appears.\n\n4. Run sudo uta-server list in the remote session to locate the device, then use your existing flashing tool.",
@@ -319,5 +318,7 @@
   "仅在点击更新后安装，服务器配置保持不变。": "Install only when you click Update. Server settings are preserved.",
   "请先断开此服务器上的 USB 并等待清理完成，再更新云端代理": "Disconnect USB devices on this server and wait for cleanup before updating the cloud agent",
   "云端代理正在更新，请完成后再接入设备": "The cloud agent is updating. Wait for it to finish before connecting a device",
-  "云端代理更新尚未核验成功，请重新检查或使用手动安装": "The cloud agent update could not be verified. Check again or use manual installation"
+  "云端代理更新尚未核验成功，请重新检查或使用手动安装": "The cloud agent update could not be verified. Check again or use manual installation",
+  "当前分配给 {0}；请先断开并等待清理完成，再分配到其他服务器。": "Assigned to {0}. Disconnect and wait for cleanup before assigning it to another server.",
+  "设备已分配给 {0}；请先在原服务器断开并等待清理完成。": "This device is assigned to {0}. Disconnect it from its current server and wait for cleanup first."
 }

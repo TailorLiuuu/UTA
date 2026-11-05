@@ -601,7 +601,21 @@ class Controller:
                 host = self.server(item["server_id"])
                 self.background(busid, lambda b=busid, s=host: self.connect(b, s, automatic=True))
 
+    def require_assignment_available(self, busid, server):
+        # Called under the controller lock, before any disconnect/cleanup. An
+        # unsuccessful attempt must never mutate another server's session.
+        old = self.sessions.get(busid)
+        if old and old["server_id"] != server["id"] and (
+                old["state"] in ACTIVE | {"disconnecting"}
+                or old.get("remote_cleanup_pending")
+                or old.get("reconnect_deadline", 0) > time.time()
+                or busid in self.processes):
+            owner = next((s["name"] for s in self.config["servers"] if s["id"] == old["server_id"]), old["server_id"])
+            raise RuntimeError(f"设备已分配给 {owner}；请先在原服务器断开并等待清理完成。")
+
     def connect(self, busid, server, access_mode="auto", reconnect_enabled=None, automatic=False, allowed_ids=None):
+        with self.lock:
+            self.require_assignment_available(busid, server)
         native_log = None
         privileged = False
         authorization_required = False
@@ -1036,11 +1050,12 @@ class Controller:
                     raise ValueError("Invalid access mode")
                 server = self.server(request["server_id"])
                 with self.lock:
+                    self.require_assignment_available(busid, server)
                     if server['id'] in self.agent_installing:
                         raise RuntimeError("云端代理正在更新，请完成后再接入设备")
                     if not any(d["busid"] == busid for d in self.devices):
                         raise ValueError("设备未连接到本机")
-                self.background(busid, lambda: self.connect(busid, server, mode, reconnect, allowed_ids=ids))
+                    self.background(busid, lambda: self.connect(busid, server, mode, reconnect, allowed_ids=ids))
             else:
                 self.background(busid, lambda: self.disconnect(busid))
             return {"started": True}

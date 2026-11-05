@@ -211,7 +211,7 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(c.sessions["1-2"]["state"], "attached")
             cleanup.assert_not_called()
 
-    def test_switch_does_not_connect_if_old_release_unconfirmed(self):
+    def test_switch_does_not_release_another_servers_active_device(self):
         with tempfile.TemporaryDirectory() as root:
             c = self.controller(root)
             a = client.validate_server(dict(name="a", target="host-a"))
@@ -220,10 +220,11 @@ class ConfigTests(unittest.TestCase):
             c.sessions["1-2"] = dict(busid="1-2", server_id=a["id"],
                                       state="attached", session="a" * 32)
             with patch.object(client, "remote_json", side_effect=RuntimeError("offline")) as remote:
-                c.connect("1-2", b)
-            self.assertEqual(remote.call_count, 1)
+                with self.assertRaisesRegex(RuntimeError, "设备已分配给 a"):
+                    c.connect("1-2", b)
+            remote.assert_not_called()
             self.assertEqual(c.sessions["1-2"]["server_id"], a["id"])
-            self.assertEqual(c.sessions["1-2"]["state"], "error")
+            self.assertEqual(c.sessions["1-2"]["state"], "attached")
 
     def test_offline_probe_does_not_report_ready(self):
         with tempfile.TemporaryDirectory() as root:

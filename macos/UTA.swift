@@ -126,6 +126,10 @@ struct Session: Decodable {
     let monitorError: String?
     var statusUncertain: Bool { ["attached", "enumerating"].contains(state) && (monitorFailures ?? 0) > 0 }
     var isActive: Bool { ["connecting", "enumerating", "attached", "disconnecting", "waiting_reconnect"].contains(state) }
+    var reservesUSB: Bool {
+        showsMissingUSBSession(state: state, cleanupPending: remoteCleanupPending == true,
+                               busy: false, reconnectDeadline: reconnectDeadline, now: Date().timeIntervalSince1970)
+    }
 }
 
 struct ReconnectControl: View {
@@ -305,6 +309,9 @@ struct Envelope: Decodable {
         } catch { self.error = error.localizedDescription; return false }
     }
     func session(_ device: Device) -> Session? { state.sessions.first { $0.busid == device.busid } }
+    func assignment(_ busid: String) -> Session? {
+        state.sessions.first { $0.busid == busid && ($0.reservesUSB || state.busy.contains(busid)) }
+    }
     func quiesceForUpdate() async {
         suspendedForUpdate = true
         while refreshing { try? await Task.sleep(for: .milliseconds(50)) }
@@ -575,6 +582,7 @@ struct DeviceCard: View {
     @State private var details = false
     var session: Session? { model.session(device) }
     var busy: Bool { model.state.busy.contains(device.busid) }
+    var assigned: Bool { model.assignment(device.busid) != nil }
     var status: (String, Color) {
         if session?.statusUncertain == true { return (L("状态待确认"), .orange) }
         switch session?.state {
@@ -607,18 +615,22 @@ struct DeviceCard: View {
                 Picker(L("目标服务器"), selection: $target) {
                     Text(L("选择服务器")).tag("")
                     ForEach(model.state.servers) { host in Text(host.name).tag(host.id) }
-                }.labelsHidden().frame(maxWidth: 260).disabled(busy)
+                }.labelsHidden().frame(maxWidth: 260).disabled(busy || assigned)
                 Spacer()
                 if session != nil && session?.state != "local" || session?.remoteCleanupPending == true {
                     Button(L("断开")) {
                         Task { await model.call(["action": "disconnect", "busid": device.busid]) }
                     }.disabled(busy)
                 }
-                Button(session?.state == "attached" && target != session?.serverId ? L("切换接入") : L("接入")) {
+                Button(L("接入")) {
                     Task { await model.call(["action": "connect", "busid": device.busid, "server_id": target]) }
                 }
                 .buttonStyle(.borderedProminent).tint(accent)
-                .disabled(target.isEmpty || busy || (session?.state == "attached" && target == session?.serverId))
+                .disabled(target.isEmpty || busy || assigned)
+            }
+            if assigned, let session {
+                Text(L("当前分配给 \(model.host(session.serverId)?.name ?? session.serverId)；请先断开并等待清理完成，再分配到其他服务器。"))
+                    .font(.system(size: 12)).foregroundStyle(muted)
             }
             if let session {
                 HStack(alignment: .top, spacing: 6) {
@@ -656,6 +668,9 @@ struct DeviceCard: View {
         .padding(19).background(.white, in: RoundedRectangle(cornerRadius: 15))
         .overlay(RoundedRectangle(cornerRadius: 15).stroke(Color.black.opacity(0.055)))
         .onAppear { target = session?.serverId ?? model.selected ?? "" }
+        .onChange(of: model.assignment(device.busid)?.serverId) { _, id in
+            if let id { target = id }
+        }
         .onChange(of: model.selected) { _, id in
             if session?.state != "attached" { target = id ?? "" }
         }
@@ -791,6 +806,11 @@ struct ContentView: View {
         }
     }
     var knownDeviceCount: Int { model.state.devices.count + visibleMissingSessions.count }
+    var selectableDeviceIDs: Set<String> {
+        Set(model.state.devices.filter { device in
+            model.assignment(device.busid).map { $0.serverId == selected?.id } ?? true
+        }.map(\.busid))
+    }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -845,12 +865,17 @@ struct ContentView: View {
                                     if s.isActive {
                                         Button(L("断开")) {
                                             Task { await model.call(["action": "disconnect", "busid": s.busid]) }
-                                        }.disabled(model.state.busy.contains(s.busid))
+                                        }.disabled(model.state.busy.contains(s.busid) || (selected != nil && selected?.id != s.serverId))
                                     }
                                 }
                                 Text(D(s.message)).font(.system(size: 12)).foregroundStyle(muted).textSelection(.enabled)
                                 RemotePortsView(session: s, serverName: model.host(s.serverId)?.name ?? s.serverId)
                                 ReconnectControl(session: s)
+                                    .disabled(selected != nil && selected?.id != s.serverId)
+                                if let selected, selected.id != s.serverId {
+                                    Text(L("当前分配给 \(model.host(s.serverId)?.name ?? s.serverId)；请先断开并等待清理完成，再分配到其他服务器。"))
+                                        .font(.system(size: 12)).foregroundStyle(.orange)
+                                }
                                 Text(s.state == "waiting_reconnect" ? (s.remoteCleanupPending == true ? L("正在清理旧云端端口，完成后再自动接入。") : L("旧云端端口已释放；设备返回后会自动创建新端口。")) : s.isActive ? L("设备由 UTA 接管；断开后会交还 Mac，再选择其他服务器接入。") : L("本地扫描暂未发现设备；请检查连接后重新接入。"))
                                     .font(.system(size: 11)).foregroundStyle(muted)
                             }.padding().background(.white, in: RoundedRectangle(cornerRadius: 12))
@@ -883,8 +908,8 @@ struct ContentView: View {
             }
         }
         .onChange(of: model.selected) { _, _ in chosenDevices.removeAll() }
-        .onChange(of: model.state.devices.map(\.busid)) { _, ids in
-            chosenDevices.formIntersection(Set(ids))
+        .onChange(of: selectableDeviceIDs) { _, ids in
+            chosenDevices.formIntersection(ids)
         }
         .alert(L("操作未完成"), isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {
             Button(L("知道了")) { model.error = nil }
@@ -1108,6 +1133,7 @@ struct ContentView: View {
                 .disabled(!model.state.sessions.contains { chosenDevices.contains($0.busid) && $0.serverId == host.id && ($0.state != "local" || $0.remoteCleanupPending == true) })
             Button(L("接入 \(host.name)"), systemImage: "link") { submitDevices(host, release: false) }
                 .buttonStyle(.borderedProminent).tint(accent)
+                .disabled(chosenDevices.contains { model.assignment($0) != nil })
         }.disabled(submitting || chosenDevices.isEmpty || chosenDevices.contains { model.state.busy.contains($0) })
     }
 
@@ -1120,7 +1146,10 @@ struct ContentView: View {
                 if release {
                     guard session?.serverId == host.id,
                           session?.state != "local" || session?.remoteCleanupPending == true else { continue }
-                } else if session?.serverId == host.id && session?.state == "attached" { continue }
+                } else if !selectableDeviceIDs.contains(id) || model.assignment(id) != nil {
+                    chosenDevices.remove(id)
+                    continue
+                }
                 let request: [String: Any] = release ?
                     ["action": "disconnect", "busid": id] :
                     ["action": "connect", "busid": id, "server_id": host.id]
@@ -1134,7 +1163,7 @@ struct ContentView: View {
     func serverDevice(_ device: Device, host: Host) -> some View {
         let session = model.session(device)
         let assigned = session.flatMap { model.host($0.serverId) }
-        let elsewhere = assigned != nil && assigned?.id != host.id && session?.state != "local"
+        let elsewhere = model.assignment(device.busid).map { $0.serverId != host.id } ?? false
         let state = session?.state ?? "local"
         let label = session?.statusUncertain == true ? L("状态待确认") : state == "attached" ? L("云端已挂载") :
             state == "connecting" ? L("正在连接") :
@@ -1147,9 +1176,9 @@ struct ContentView: View {
         return VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 14) {
                 Toggle(L("选择 \(device.name)"), isOn: Binding(get: { chosenDevices.contains(device.busid) },
-                    set: { if $0 { chosenDevices.insert(device.busid) } else { chosenDevices.remove(device.busid) } }))
+                    set: { if $0 && selectableDeviceIDs.contains(device.busid) { chosenDevices.insert(device.busid) } else { chosenDevices.remove(device.busid) } }))
                     .labelsHidden().toggleStyle(.checkbox)
-                    .disabled(submitting || model.state.busy.contains(device.busid))
+                    .disabled(submitting || model.state.busy.contains(device.busid) || elsewhere)
                 Image(systemName: "cable.connector").font(.title2).foregroundStyle(accent)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(device.name).font(.system(size: 14, weight: .semibold))
@@ -1159,7 +1188,7 @@ struct ContentView: View {
                 Badge(text: label, color: session?.statusUncertain == true ? .orange : state == "error" ? .red : state == "attached" ? accent : muted)
             }
             if elsewhere {
-                Text(L("当前分配给 \(assigned?.name ?? "")；接入将先释放旧连接。"))
+                Text(L("当前分配给 \(assigned?.name ?? session?.serverId ?? "")；请先断开并等待清理完成，再分配到其他服务器。"))
                     .font(.system(size: 12)).foregroundStyle(.orange)
             } else if state == "attached" {
                 Text(L("已接入 \(host.name)")).font(.system(size: 12)).foregroundStyle(accent)
@@ -1169,6 +1198,7 @@ struct ContentView: View {
                     .textSelection(.enabled)
                 RemotePortsView(session: session, serverName: assigned?.name ?? host.name)
                 ReconnectControl(session: session)
+                    .disabled(elsewhere)
             }
             USBAccessView(access: device.access)
         }.padding(18).background(.white, in: RoundedRectangle(cornerRadius: 12))
