@@ -192,7 +192,14 @@ struct Check: Decodable {
     let checked: Double?
     let agentStatus: String?
     let details: AgentDetails?
+    let agentUpdate: AgentUpdate?
     var installation: String { agentStatus ?? (details?.version != nil ? "installed" : "unknown") }
+}
+struct AgentUpdate: Decodable {
+    let state: String
+    let localVersion: String
+    let remoteVersion: String
+    var available: Bool { state == "available" || state == "different" }
 }
 struct AgentDetails: Decodable {
     let version: String?
@@ -869,7 +876,8 @@ struct ContentView: View {
         .sheet(isPresented: $help) { helpView }
         .sheet(isPresented: $settings) { AppSettingsView().environmentObject(updater) }
         .task(id: selected) {
-            if let selected, model.state.checks[selected.id] == nil,
+            if let selected,
+               (model.state.checks[selected.id]?.checked ?? 0) < Date().timeIntervalSince1970 - 300,
                !model.state.busy.contains(selected.id) {
                 await model.call(["action": "server_check", "id": selected.id])
             }
@@ -986,6 +994,7 @@ struct ContentView: View {
 
     func serverPanel(_ host: Host) -> some View {
         let check = model.state.checks[host.id]
+        let inUse = serverInUse(host)
         return VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Label(host.target + (host.useSshConfig == true ? L(" · SSH 配置") : " : \(host.port)"), systemImage: "network")
@@ -1012,13 +1021,13 @@ struct ContentView: View {
                     Menu {
                         Button(L("重新安装云端代理")) {
                             Task { await model.call(["action": "server_install", "id": host.id]) }
-                        }
+                        }.disabled(inUse)
                     } label: { Image(systemName: "ellipsis") }
                         .menuStyle(.borderlessButton).frame(width: 24).help(L("代理维护"))
                 } else if check?.installation == "missing" {
                     Button(L("安装云端代理"), systemImage: "arrow.down.to.line") {
                         Task { await model.call(["action": "server_install", "id": host.id]) }
-                    }
+                    }.disabled(inUse)
                 } else {
                     Text(check?.state == "checking" ? L("正在确认安装状态…") : L("安装状态待确认"))
                         .font(.system(size: 12)).foregroundStyle(muted)
@@ -1027,6 +1036,28 @@ struct ContentView: View {
                 Text(check?.installation == "installed" ? "" : L("安装需要 root 或已配置的 sudo 权限"))
                     .font(.system(size: 10)).foregroundStyle(muted)
             }.disabled(model.state.busy.contains(host.id))
+            if let update = check?.agentUpdate {
+                VStack(alignment: .leading, spacing: 7) {
+                    HStack {
+                        Label(agentUpdateTitle(update), systemImage: update.available ? "arrow.up.circle.fill" : "info.circle")
+                            .foregroundStyle(update.available ? Color.orange : muted)
+                        Spacer()
+                        if update.available {
+                            Button(L("更新云端代理")) {
+                                Task { await model.call(["action": "server_install", "id": host.id]) }
+                            }.disabled(inUse || model.state.busy.contains(host.id))
+                        }
+                    }
+                    if update.available {
+                        Text(L("云端 \(update.remoteVersion) → 本机提供 \(update.localVersion)"))
+                            .foregroundStyle(muted)
+                        Text(inUse ? L("设备正在使用或等待清理，请先断开后再更新。") : L("仅在点击更新后安装，服务器配置保持不变。"))
+                            .foregroundStyle(muted)
+                    }
+                }.font(.system(size: 12))
+                    .padding(12).background(update.available ? Color.orange.opacity(0.07) : Color.clear,
+                                            in: RoundedRectangle(cornerRadius: 9))
+            }
             if let tuning = check?.details?.ch341Tuning {
                 HStack {
                     Label(tuning.message, systemImage: "speedometer")
@@ -1040,11 +1071,30 @@ struct ContentView: View {
                 }
             }
             HStack(spacing: 10) {
-                Button(L("手动安装"), systemImage: "terminal") { manualHost = host }
+                Button(L("手动安装"), systemImage: "terminal") { manualHost = host }.disabled(inUse)
                 Text(check?.state == "error" ? L("自动安装或权限检查失败时，可在终端交互授权。") : L("在终端执行安装命令，或导出脚本交给管理员。"))
                     .font(.system(size: 11)).foregroundStyle(muted)
             }
         }.padding(17).background(accent.opacity(0.045), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    func serverInUse(_ host: Host) -> Bool {
+        model.state.sessions.contains { session in
+            session.serverId == host.id && (
+                ["connecting", "enumerating", "attached", "disconnecting", "waiting_reconnect"].contains(session.state)
+                || session.remoteCleanupPending == true || model.state.busy.contains(session.busid)
+                || (session.reconnectDeadline ?? 0) > Date().timeIntervalSince1970)
+        }
+    }
+
+    func agentUpdateTitle(_ update: AgentUpdate) -> String {
+        switch update.state {
+        case "available": return L("云端代理有更新")
+        case "different": return L("云端代理与本机提供的版本不同")
+        case "current": return L("云端代理已与本机提供的版本一致")
+        case "newer": return L("云端代理版本更新，无需覆盖")
+        default: return L("暂时无法检查云端更新，请重新检查连接")
+        }
     }
 
     func deviceActions(_ host: Host) -> some View {

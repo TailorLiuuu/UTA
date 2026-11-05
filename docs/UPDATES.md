@@ -18,6 +18,30 @@ termination the controller rechecks idle state, stops, and the UI waits for its
 exit. A failed shutdown cancels application termination instead of replacing a
 live exporter. USB connections are not automatically restored after an update.
 
+## Cloud agent update prompt (Build 22)
+
+The Mac server page checks the cloud CLI against the exact agent bundled with
+this App. Selecting a server checks when its last result is over five minutes
+old; the connection-check icon forces a fresh check. The check only reads the
+remote version and SHA-256. It never installs or changes USB routing.
+
+A matching file displays “云端代理已与本机提供的版本一致”. A recognized older
+version displays “云端代理有更新”; an unrecognized or same-version modified file
+is labeled as different, not assumed older. A recognized newer cloud version
+is not offered a downgrade. A failed checksum check stays unknown rather than
+being reported as current, without changing an otherwise ready connection.
+
+The update button shows the cloud and bundled versions. Clicking it uses the
+existing authenticated SSH installation flow and verifies the installed file
+against the bundled SHA-256. Active USB sessions, reconnect waits and pending
+cleanup on this Mac block installation; new connections are blocked while it
+runs. Root/noninteractive sudo is still required. The manual installation path
+remains available after disconnecting devices when automatic authorization fails.
+
+This is a prompt in the Mac App, not a cloud self-updater. It compares with the
+bundled agent, not an independently downloaded latest server release. Mac-only
+updates do not prompt a cloud update when the bundled CLI is unchanged.
+
 ## Publishing
 
 1. Increment `CFBundleVersion` in `scripts/build.sh` for every update. Sparkle uses

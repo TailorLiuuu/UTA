@@ -307,5 +307,17 @@
   "检测到其他 CH340 测试驱动": "Another CH340 test driver is loaded",
   "CH340 串口加速可选启用": "CH340 serial acceleration is available",
   "此内核暂不支持 CH340 加速配置": "CH340 tuning is not supported on this kernel yet",
-  "串口加速指南": "Serial acceleration guide"
+  "串口加速指南": "Serial acceleration guide",
+  "云端代理有更新": "A cloud agent update is available",
+  "云端代理与本机提供的版本不同": "The cloud agent differs from the version bundled with this app",
+  "云端代理已与本机提供的版本一致": "The cloud agent matches the version bundled with this app",
+  "云端代理版本更新，无需覆盖": "The cloud agent is newer; no replacement is needed",
+  "暂时无法检查云端更新，请重新检查连接": "Could not check for cloud agent updates. Check the connection again.",
+  "更新云端代理": "Update cloud agent",
+  "云端 {0} → 本机提供 {1}": "Cloud {0} → bundled {1}",
+  "设备正在使用或等待清理，请先断开后再更新。": "Devices are in use or awaiting cleanup. Disconnect them before updating.",
+  "仅在点击更新后安装，服务器配置保持不变。": "Install only when you click Update. Server settings are preserved.",
+  "请先断开此服务器上的 USB 并等待清理完成，再更新云端代理": "Disconnect USB devices on this server and wait for cleanup before updating the cloud agent",
+  "云端代理正在更新，请完成后再接入设备": "The cloud agent is updating. Wait for it to finish before connecting a device",
+  "云端代理更新尚未核验成功，请重新检查或使用手动安装": "The cloud agent update could not be verified. Check again or use manual installation"
 }

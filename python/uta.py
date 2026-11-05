@@ -242,6 +242,44 @@ def agent_source():
     return target
 
 
+def agent_version_order(version):
+    # Early agents all reported 0.1.0, including development snapshots. That
+    # string cannot be treated as a newer stable release than every preview.
+    if version == "0.1.0":
+        return None
+    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:-preview\.(\d+)(-dev)?)?", version or "")
+    if not match:
+        return None
+    major, minor, patch, preview, dev = match.groups()
+    return (int(major), int(minor), int(patch), int(preview) if preview else float('inf'), 0 if dev else 1)
+
+
+def agent_update_info(server, remote_version):
+    """Read-only comparison with the exact agent bundled in this Mac App."""
+    result = dict(state="unknown", local_version="", remote_version=remote_version or "")
+    try:
+        data = agent_source().read_bytes()
+        match = re.search(rb'^VERSION\s*=\s*[\'"]([^\'"\r\n]+)[\'"]', data, re.M)
+        if not match:
+            raise ValueError("本机代理版本信息缺失")
+        result["local_version"] = match[1].decode('utf-8')
+        expected = hashlib.sha256(data).hexdigest()
+        checksum = remote_command(server, ["sha256sum", REMOTE]).strip().split()
+        if not checksum or not re.fullmatch(r'[0-9a-fA-F]{64}', checksum[0]):
+            raise ValueError("云端代理校验信息无效")
+        result.update(local_sha256=expected, remote_sha256=checksum[0].lower())
+        if expected == checksum[0].lower():
+            result["state"] = "current"
+        else:
+            local = agent_version_order(result["local_version"])
+            remote = agent_version_order(remote_version)
+            result["state"] = ("available" if local > remote else "newer" if local < remote else "different") \
+                if local is not None and remote is not None else "different"
+    except Exception as exc:
+        result["error"] = str(exc)
+    return result
+
+
 def manual_install_plan(server):
     """Prepare reviewable commands; never execute SSH or change the server."""
     source = agent_source()
@@ -307,6 +345,7 @@ class Controller:
                             message="本地已断开，正在自动清理云端会话…")
                 self.sessions[item["busid"]] = item
         self.checks = {}
+        self.agent_installing = set()
         self.processes = {}
         self.busy = set()
         self.update_owner = None
@@ -389,6 +428,19 @@ class Controller:
                          checks=self.checks, scan_error=self.scan_error,
                          home=str(HOME), busy=sorted(self.busy), local_access=self.local_access))
 
+    def server_in_use(self, sid):
+        return any(s["server_id"] == sid and (
+            s["state"] in ACTIVE | {"disconnecting"} or s["busid"] in self.busy
+            or s.get("remote_cleanup_pending") or s.get("reconnect_deadline", 0) > time.time())
+            for s in self.sessions.values())
+
+    def install_agent(self, server):
+        try:
+            self.check_server(server, install=True)
+        finally:
+            with self.lock:
+                self.agent_installing.discard(server["id"])
+
     def check_server(self, server, install=False):
         sid = server["id"]
         agent_status = "unknown"
@@ -397,6 +449,9 @@ class Controller:
                                    message="正在安装云端代理…" if install else "正在检查 SSH 和云端代理…")
         try:
             if install:
+                with self.lock:
+                    if self.server_in_use(sid):
+                        raise RuntimeError("请先断开此服务器上的 USB 并等待清理完成，再更新云端代理")
                 source = agent_source()
                 # Upload without scp path interpolation. Installation requires existing
                 # root / noninteractive sudo rights; never modify sudoers automatically.
@@ -421,12 +476,15 @@ class Controller:
                                            checked=time.time())
                 return
             info = remote_json(server, ["doctor"])
+            agent_update = agent_update_info(server, info.get("version"))
+            if install and agent_update["state"] != "current":
+                raise RuntimeError("云端代理更新尚未核验成功，请重新检查或使用手动安装")
             ready = info.get("root") and info.get("vhci_available")
             with self.lock:
                 self.checks[sid] = dict(state="ready" if ready else "needs_setup",
                                        agent_status="installed",
                                        message="SSH 和虚拟 USB 已就绪" if ready else info["message"],
-                                       details=info, checked=time.time())
+                                       details=info, agent_update=agent_update, checked=time.time())
         except Exception as exc:
             with self.lock:
                 self.checks[sid] = dict(state="error", agent_status=agent_status,
@@ -559,6 +617,8 @@ class Controller:
                     if self.sessions[busid].get("remote_cleanup_pending"):
                         raise RuntimeError("旧服务器未确认释放。请恢复旧服务器连接并断开后再切换。")
             with self.lock:
+                if server['id'] in self.agent_installing:
+                    raise RuntimeError("云端代理正在更新，请完成后再接入设备")
                 device = next((d for d in self.devices if d["busid"] == busid), None)
                 if not device:
                     raise RuntimeError("USB 设备已拔出，请刷新后重新选择")
@@ -875,7 +935,20 @@ class Controller:
             return {}
         if action in ("server_check", "server_install"):
             server = self.server(request["id"])
-            self.background(server["id"], lambda: self.check_server(server, action == "server_install"))
+            with self.lock:
+                if action == "server_install":
+                    if self.server_in_use(server["id"]):
+                        raise RuntimeError("请先断开此服务器上的 USB 并等待清理完成，再更新云端代理")
+                    if server["id"] in self.busy:
+                        raise RuntimeError("该设备/服务器正在执行操作，请稍候")
+                    self.agent_installing.add(server["id"])
+                    try:
+                        self.background(server["id"], lambda: self.install_agent(server))
+                    except Exception:
+                        self.agent_installing.discard(server["id"])
+                        raise
+                else:
+                    self.background(server["id"], lambda: self.check_server(server))
             return {"started": True}
         if action == "server_manual":
             return manual_install_plan(self.server(request["id"]))
@@ -963,6 +1036,8 @@ class Controller:
                     raise ValueError("Invalid access mode")
                 server = self.server(request["server_id"])
                 with self.lock:
+                    if server['id'] in self.agent_installing:
+                        raise RuntimeError("云端代理正在更新，请完成后再接入设备")
                     if not any(d["busid"] == busid for d in self.devices):
                         raise ValueError("设备未连接到本机")
                 self.background(busid, lambda: self.connect(busid, server, mode, reconnect, allowed_ids=ids))
