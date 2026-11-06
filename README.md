@@ -6,14 +6,14 @@ UTA 将 Mac 上选定的真实 USB 设备，通过 SSH 接入远程 Linux 服务
 服务器上的工具直接使用虚拟 USB 和对应串口，固件与编译环境留在服务器，
 无需来回下载文件到本机烧录。
 
-**当前状态：0.1 实验原型，build 24（Preview 12）。** 已完成部分开发板实机验证，尚未完成通用 USB
+**当前状态：0.1 实验原型，build 25（Preview 13）。** 已完成部分开发板实机验证，尚未完成通用 USB
 兼容性验收。当前支持 **macOS Apple Silicon → Linux**，没有 Windows 或 iOS 客户端。
 提供预编译安装包与源码。预览版已签名，但尚未经过 Apple 公证。
 
 ## 下载 Mac 预览版
 
-**[下载 DMG 安装包](https://github.com/TailorLiuuu/UTA/releases/download/v0.1.0-preview.12/UTA-0.1.0-macOS-arm64.dmg)** ·
-[Release 与 ZIP 备用包](https://github.com/TailorLiuuu/UTA/releases/tag/v0.1.0-preview.12) ·
+**[下载 DMG 安装包](https://github.com/TailorLiuuu/UTA/releases/download/v0.1.0-preview.13/UTA-0.1.0-macOS-arm64.dmg)** ·
+[Release 与 ZIP 备用包](https://github.com/TailorLiuuu/UTA/releases/tag/v0.1.0-preview.13) ·
 [首次安装指南](docs/INSTALL-macOS.md)
 
 适用于 Apple Silicon / macOS 26，需另行安装 Python 3.9+。打开 DMG，将 UTA 拖入
@@ -38,15 +38,17 @@ Preview 10 在服务器页面提示云端 CLI 更新，显示云端与本机自�
 
 Preview 11 禁止跨服务器抢占已分配的 USB：其他服务器页面不可选；需先断开原连接并等待清理完成，再分配到新服务器。等待重连期间也保持原归属，CLI 遵循相同限制。
 
-Preview 12 将可选 CH340/CH341 加速扩展至 Linux 5.4，保留 5.15 支持。已验证 5.4 驱动加载与真实 USB 接入；本次未验证烧录吞吐或日志完整性。需要显式更新云端 CLI 并启用加速，Mac 更新不自动修改服务器内核或驱动。
-
 ## 可选 CH340 串口加速
 
-Preview 8 的云端代理提供 `tune-ch341 status|build|enable|disable`，针对 Linux 5.15
-将 CH340 的 USB 接收与发送缓冲均设为 4096 字节，修复高速读回数据不完整的问题。
-官方 BK7259 CLI 经 UTA 完成约 4.59 MB 烧录，用时约 2 分 43 秒；这是特定设备和网络的实测结果。
-**升级 Mac App 后仍需更新云端代理并由管理员显式启用，服务器重启后需重新启用。**
-设备接入中会拒绝切换；系统原驱动保留。详见 [启用、恢复及限制](docs/CH340-TUNING.md)。
+Preview 13 支持 Linux 5.4 / 5.15 的可选 CH340/CH341 高速传输优化：接收缓冲 4096 字节，
+发送缓冲与 FIFO 至少 8192 字节，避免约 4 KiB 的应用写入被 TTY 层拆成多个小请求。
+在服务器页面检测状态并「一键启用」；需要管理员密码时打开授权终端，命令由 UTA 填好。
+旧 Preview 7 / rx1 优化可升级，启用前须断开同类设备。重启服务器后需要再次启用。
+
+在 Linux 5.4 上，一轮 BK7259 官方工具以 921600 烧录约 4.72 MB 镜像用时 107 秒，
+写入阶段 103 秒；工具报告通过，额外尾部读回一致。此为单次硬件/网络结果，不保证所有
+烧录工具、设备或链路同速。烧录协议和参数继续由外部工具负责。
+详见 [配置与限制](docs/CH340-TUNING.md) 和 [高速验证记录](docs/CH341-HIGHSPEED-VALIDATION.md)。
 
 ## 工作方式
 

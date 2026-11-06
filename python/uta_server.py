@@ -18,7 +18,7 @@ import sys
 import time
 import uta_ch341
 
-VERSION = "0.1.0-preview.12"
+VERSION = "0.1.0-preview.13"
 VHCI = Path("/sys/devices/platform/vhci_hcd.0")
 STATE = Path("/run/uta")
 # Keep existing live session records accessible when upgrading an older agent.
@@ -247,7 +247,9 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("doctor")
     tune = sub.add_parser("tune-ch341", help="Opt-in Linux 5.4/5.15 CH340 USB/IP throughput tuning")
-    tune.add_argument("action", choices=("status", "build", "enable", "disable"))
+    tune.add_argument("action", choices=("status", "build", "enable", "disable", "setup"))
+    tune.add_argument("--install-dependencies", action="store_true",
+                      help="Allow setup to install missing build packages via apt-get")
     sub.add_parser("list")
     status = sub.add_parser("status")
     status.add_argument("--session", required=True)
@@ -264,7 +266,7 @@ def main():
         if sys.platform != "linux":
             raise RuntimeError("This CLI must run on Linux, not on the Mac")
         if args.command == "tune-ch341":
-            result = uta_ch341.dispatch(args.action)
+            result = uta_ch341.dispatch(args.action, args.install_dependencies)
         elif args.command == "doctor":
             result = doctor()
         elif args.command == "list":

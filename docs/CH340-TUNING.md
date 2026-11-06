@@ -1,103 +1,99 @@
 # CH340 / CH341 USB/IP 串口加速
 
-Preview 7 增加可选的 Linux 驱动调优。它调整 USB 发送缓冲，不加入任何芯片烧录协议。支持预览范围为 Linux 5.15；实机验证环境为 Ubuntu 5.15.0-173-generic、CH340 1a86:7523、Mac → SSH → Linux。
+Preview 13 / Build 25 提供可选的 Linux 5.4 / 5.15 CH340/CH341 传输优化。
+UTA 仍只负责 USB 接入和传输，烧录协议、波特率、复位、固件校验由原来的工具负责。
 
-Preview 8 包含 `uta-ch341-rx1` 修正：同时将 bulk IN / OUT 缓冲设为 4096 字节。
-Preview 7 已发布安装包只有 OUT 调优，不能据此判断高速读回已修复。
-小接收缓冲跨网络补交请求不及时，会使 UART 突发响应丢字节；此问题不能仅靠增加烧录工具超时解决。
-修正仍属于通用 USB 串口驱动调优，不包含任何芯片的烧录协议。
+## 优化内容
 
-## Linux 5.4 兼容（Preview 12 / Build 24）
+- bulk IN 接收缓冲保持 4096 字节，减少跨网络接收突发响应时的请求间隙。
+- bulk OUT 发送缓冲设为 8192 字节，端口发布前将发送 FIFO 扩至至少 8192 字节。
+- 打开串口时使用 `TTY_NO_WRITE_SPLIT`，避免 TTY 层把约 4 KiB 的应用写入拆成 2 KiB 小块。
+- 当前版本标识 `uta-ch341-tx2`。不承诺任意长度写入都对应单个 USB 请求。
 
-Preview 12 额外支持 Linux 5.4，仍使用固定哈希的 Linux 5.15 上游 CH341 源码。
-5.4 的 `usb_serial_driver.port_remove` 要求返回 `int`，生成驱动时加入适配回调，
-执行原清理函数后返回 0；5.15 的生成源码保持不变。双向缓冲仍为 4096 字节。
-构建必须使用目标正在运行的内核头文件；不升级内核、不覆盖系统驱动、不写开机加载配置。
+源码来自固定哈希的 Linux 5.15 CH341 驱动。Linux 5.4 构建额外适配 `port_remove` 返回类型。
+构建使用服务器当前内核头文件，不升级内核、不覆盖原系统驱动、不配置开机加载。
 
-已在 Ubuntu 20.04 / `5.4.0-162-generic` 完成编译、加载、参数读取、重复启用、
-恢复系统驱动及再次启用。原系统驱动文件 SHA-256 保持一致。随后已通过真实 CH340 的 UTA 接入、驱动绑定与 30 秒连接观察；
-尚未验证串口数据收发、烧录吞吐或日志完整性，其他 5.4 发行版仍需分别验证。
-详见 [5.4 验证记录](CH341-KERNEL54-VALIDATION.md)。
+## 在 App 中启用或升级
 
-此支持需要更新云端代理；仅升级 Mac App 不会自动安装或启用加速模块。
-本次 Release 不包含服务器虚拟 USB 端口扩容模块。
+1. 更新 UTA，选择服务器，查看「服务器 USB 优化」。刷新图标只检测状态。
+2. 停止烧录、串口日志工具，断开该服务器的 UTA USB 并等待清理完成。
+   其他客户端或服务器本地连接的 CH340/CH341 也必须断开。
+3. 点击「一键启用」并确认。UTA 上传并核验随 App 打包的代理，准备缺失构建依赖，
+   编译、启用并读回实际状态。只有当前版本、IN 4096、OUT 8192 均匹配才显示已启用。
+4. 需要密码时点击「授权并启用」，在自动打开的系统终端完成 SSH / sudo 授权。
+   UTA 不收集或保存密码，账号需具备完整管理员权限。
+5. 重新接入设备，使用 App 显示的最新串口路径。查看问题可打开「配置日志」。
 
-## 为什么需要
+已知 Preview 7 和 `uta-ch341-rx1` 旧模块可以升级：先构建成功，再确认全部设备空闲后切换。
+未知模块（包括临时测试版本）不会自动卸载。构建失败保留旧模块，加载失败尝试恢复系统驱动。
 
-Linux CH341 驱动默认使用 USB 端点大小作为发送缓冲。测试设备的端点是 32 字节，跨网络时大量小传输反复等待往返。把波特率从 115200 提高到 921600，仍只有约 1.6–1.8 KB/s。将驱动 bulk OUT 缓冲改为 4096 后，外部工具的 4 KiB 写入成功，实测写入阶段平均约 30 KB/s。USB 包大小、设备协议和固件都不因此改变。
+缺失依赖仅在 apt-get 系统上自动安装。不支持的内核、未知模块、Secure Boot/lockdown 拒绝均会报错；
+不修改安全策略或 sudoers。仅升级 Mac App 不会自动更新云端代理或启用驱动。
+此模块仅当前启动有效，服务器重启后再次点击启用即可。
 
-调优会影响服务器上使用同一个驱动的所有 CH340/CH341。启用、关闭前必须断开全部对应设备；工具发现仍有 ttyUSB 端口时会拒绝切换，不会强制卸载驱动。不要在烧录或日志采集中切换。
+## CLI
 
-## 安装、检查和启用
-
-1. 更新 Mac App，在服务器菜单中「重新安装云端代理」，或按手动安装说明部署 Release 的 `uta-server`。**仅升级 Mac App 不会升级代理或启用驱动调优。**
-2. 在服务器运行只读检查：
-
-```sh
-/usr/local/bin/uta-server tune-ch341 status
-```
-
-3. 编译、加载内核模块需要完整管理员权限。直接使用 root 登录；如果使用 sudo，先进入管理员 shell：
+Mac 上异步启动，使用 `status` 查看进度：
 
 ```sh
-sudo -i
-unset SUDO_UID
+uta server optimize SERVER_ID
+# 状态为 authorization_required 时打开授权终端：
+uta server optimize SERVER_ID --interactive
+uta status
 ```
 
-`unset` 只在已获得完整 root shell 后执行；工具有意拒绝普通用户通过仅委派 `uta-server` 的 sudo 规则加载内核代码。不会修改 sudoers。
-
-4. 安装当前内核的构建依赖（Ubuntu 示例）：
+服务器上先更新 Release 的 `uta-server`。在完整管理员 root shell 中运行：
 
 ```sh
-apt-get install build-essential linux-headers-$(uname -r)
-/usr/local/bin/uta-server tune-ch341 build
+uta-server tune-ch341 status
+uta-server tune-ch341 setup --install-dependencies
 ```
 
-驱动源码随代理打包并核对固定 SHA-256；构建不下载代码，也不安装缺失依赖。文件写入 root 私有的 `/var/lib/uta-ch341`。命令成功返回 `state: built`。
+若通过 `sudo -i` 进入完整 root shell，在该 shell 中执行 `unset SUDO_UID` 后运行。
+仅委派 `uta-server` 的 sudo 权限不允许加载内核模块。`--install-dependencies` 显式允许安装缺失
+构建包，不带此选项时需自行准备 `build-essential` 和当前内核的 `linux-headers`。
 
-5. 停止烧录、日志工具，在 UTA 中断开所有 CH340/CH341；服务器直接插入的同类设备也需拔出。然后执行：
+分步流程仍可用：`tune-ch341 build`、`enable`、`status`、`disable`。
+`setup` 支持已知旧模块升级；`enable` 不会直接替换已加载的旧版本。
+正确状态应包含：
 
-```sh
-/usr/local/bin/uta-server tune-ch341 enable
-/usr/local/bin/uta-server tune-ch341 status
+```json
+{"state":"enabled","revision":"uta-ch341-tx2","bulk_in_bytes":4096,"bulk_out_bytes":8192,"persistent":false}
 ```
 
-看到 `state: enabled`、`bulk_out_bytes: 4096` 后重新接入 USB。使用当前源码的接收修正时，还须确认
-`revision: uta-ch341-rx1`、`bulk_in_bytes: 4096`。端口号可能变化，使用 App 当前显示的节点。点击服务器的检查图标，可刷新界面上的加速状态。
+内核模块影响该服务器所有 CH340/CH341。不要在烧录或日志采集中切换。
+恢复系统驱动：断开全部同类设备，在完整管理员 shell 执行 `uta-server tune-ch341 disable`。
+系统原驱动文件保留。内核升级后必须重新检查支持范围并构建。
 
-外部烧录工具继续使用原协议；为获得本次验证的速度，使用 921600 和 4 KiB 写入。强制逐页写入、低波特率、网络延迟、Flash 擦写速度都会限制吞吐。不同芯片不保证相同结果。
+## 烧录速度和验证边界
 
-## 恢复系统驱动
+在 Linux 5.4.0-162-generic 上，一轮 BK7259 官方 CLI 以 921600 烧录 4,723,744 字节镜像：
+全程 106.983 秒，写入阶段 103 秒；工具报告 `Download complete, all pass.`，Flash 保护恢复，
+额外读回末尾 4096 字节，其中镜像剩余 1056 字节与源文件一致。
+此前同板 115200 写入阶段为 433.586 秒，本轮约快 4.21 倍。
 
-先断开全部 CH340/CH341，再在管理员 root shell 执行：
+这是单次硬件、已有 Flash 内容、工具配置及网络条件下的结果，原工具可能跳过已有正确内容。
+不代表空白芯片全量擦写计时、长期稳定性、日志零丢失或固件功能验收。
+使用高波特率、大块写入及覆盖网络延迟的工具超时，同时保留地址、响应及 CRC 校验。
+UTA 不自动修改这些参数，也不保证每种芯片均达到相同速度。
 
-```sh
-/usr/local/bin/uta-server tune-ch341 disable
-```
-
-系统原有 `ch341.ko` 不被覆盖。加载失败时尝试恢复系统驱动；失败信息会分别报告加载和恢复结果。没有配置开机加载或 DKMS，**服务器重启后调优失效**；同内核可以重新 `enable`，内核升级需重新检查支持范围并构建。
-
-`external_driver` 表示已有其他版本的 `ch341_uta`，工具不会自动卸载它。管理员确认设备全部断开后，可手动 `rmmod ch341_uta`、`modprobe ch341`，再使用本版本命令。
-
-从 Preview 7 升级接收修正时，先用旧代理 `disable`，再更新代理、`build`、`enable`；全程保持所有
-CH340/CH341 断开。如果已经先更新代理，旧模块会显示 `external_driver`，按上面的显式恢复步骤处理。
-不会把旧 OUT-only 模块误报为已启用接收修正。
-
-## 烧录工具的等待时间
-
-接收缓冲修正不消除网络延迟。工具的读回超时应覆盖串口传输和网络往返；切速命令还需要为远端
-USB 控制请求留出时间。应使用工具自己的配置，保留响应码、地址、CRC 校验，不能把超时结果当作成功。
-BK7259 官方 CLI 4.1.7 的具体实测及配置见 [验证记录](BK7259-UTA-2026-11-02.md)。这些配置属于外部工具，
-UTA 不会识别设备型号、自动修改烧录参数或注入协议命令。
-
-本预览模块未签名。Secure Boot / 内核 lockdown 环境可能拒绝加载；工具不会关闭安全设置，应继续使用系统驱动。不支持的内核保持原 USB 透传行为。自编译模块会留下 Linux 的 out-of-tree/unsigned taint 标记，这是内核模块加载状态，不会因卸载而立即清除。
-
-## 本次实测边界
-
-4,614,072 字节镜像：最终续写 626 个扇区（2,564,096 字节），501 个已有正确扇区跳过；整体 145.252 秒。写入、必要擦除及逐扇区 CRC 合计 85.442 秒，平均 30,009.74 B/s。完整补齐后的镜像 CRC 校验通过，保留分区一致，Flash 保护恢复。4.6 MB 从头烧录预计约 3–4 分钟，此数字为估计，并非重新全量烧录计时。用户固件功能不在此次发布验收范围内。
+详见 [高速验证记录](CH341-HIGHSPEED-VALIDATION.md)。早期版本记录见
+[Linux 5.4 初始接入验证](CH341-KERNEL54-VALIDATION.md) 和
+[BK7259 外部工具等待参数](BK7259-UTA-2026-11-02.md)。
 
 ## English quick start
 
-Optional, session-only CH340/CH341 USB/IP transmit-buffer tuning. Preview 12 supports Linux 5.4 and 5.15; physically tested on Ubuntu 5.15.0-173-generic. Update the server agent separately from the Mac app. Run `uta-server tune-ch341 status`, then `build` in an administrator root shell with matching kernel headers and build tools installed. If entering via `sudo -i`, run `unset SUDO_UID` inside that authorized root shell first. Delegated agent-only sudo is intentionally insufficient for kernel module loading.
+Preview 13 / Build 25 supports optional, session-only CH340/CH341 tuning on Linux 5.4 and 5.15.
+IN remains 4096 bytes; OUT and the minimum write FIFO are 8192 bytes. TTY write splitting is disabled
+for this driver. The tuning remains protocol-neutral and does not change your flashing application.
 
-Disconnect **all** CH340/CH341 devices, run `enable`, verify `state: enabled`, and reconnect. `disable` restores the system driver after disconnecting all matching devices. Reboot loses the tuning; no DKMS, startup installation, or original module replacement is performed. Secure Boot/lockdown and other kernel versions may not support this unsigned preview module. The original flashing application still supplies the device protocol and should use its large-block/high-baud mode. The measured ~30 KB/s is one hardware/network result, not a universal guarantee.
+Select a server, disconnect its USB sessions and all CH340/CH341 devices, then choose **Server USB
+optimization → Enable optimization**. The app builds before switching drivers and verifies the result.
+**Authorize and enable** opens Terminal when administrator credentials are required. Known Preview 7
+and rx1 drivers can be upgraded; unknown modules and kernel security restrictions are not overridden.
+The Mac CLI provides `uta server optimize SERVER_ID [--interactive]`. On the server, a full administrator
+shell can run `uta-server tune-ch341 setup --install-dependencies`. No password storage, system kernel
+upgrade, system driver overwrite or boot persistence is performed. Re-enable after reboot.
+
+One Linux 5.4 high-speed flash completed in 107 seconds for a 4.72 MB image, with official tool success
+and matching extra tail readback. This is not a universal performance or long-term stability guarantee.

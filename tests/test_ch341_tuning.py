@@ -35,7 +35,7 @@ class TuningTests(unittest.TestCase):
         self.assertIn('ch341_port_remove(port);\n\treturn 0;', text)
         self.assertIn('.port_remove       = uta_ch341_port_remove_54,', text)
         self.assertIn('.bulk_in_size      = 4096,', text)
-        self.assertIn('.bulk_out_size     = 4096,', text)
+        self.assertIn('.bulk_out_size     = 8192,', text)
         modern = tune.source('5.15.0-173-generic')
         self.assertEqual(modern, tune.source())
         self.assertNotIn('uta_ch341_port_remove_54', modern)
@@ -53,9 +53,9 @@ class TuningTests(unittest.TestCase):
         blob = base64.b64encode(gzip.compress(raw)).decode()
         with patch.object(tune, 'SOURCE_GZIP_B64', blob):
             self.assertEqual(tune.source(), expected)
-        self.assertIn('.bulk_out_size     = 4096,', expected)
+        self.assertIn('.bulk_out_size     = 8192,', expected)
         self.assertIn('.bulk_in_size      = 4096,', expected)
-        self.assertIn('MODULE_VERSION("uta-ch341-rx1")', expected)
+        self.assertIn('MODULE_VERSION("uta-ch341-tx2")', expected)
         self.assertIn('module_param(uta_bulk_in_bytes, uint, 0444)', expected)
         with patch.object(tune, 'SOURCE_GZIP_B64', base64.b64encode(gzip.compress(b'wrong source')).decode()):
             with self.assertRaisesRegex(RuntimeError, 'checksum'): tune.source()
@@ -66,7 +66,7 @@ class TuningTests(unittest.TestCase):
             with patch.object(tune,'SYS_MODULE',root), patch.object(tune,'SERIAL_DRIVER',root/'ports'):
                 self.assertEqual(tune.status()['state'],'external_driver')
                 (module/'version').write_text(tune.REVISION)
-                (module/'parameters/uta_bulk_out_bytes').write_text('4096')
+                (module/'parameters/uta_bulk_out_bytes').write_text('8192')
                 # OUT-only drivers must not claim that receive tuning is active.
                 self.assertEqual(tune.status()['state'],'external_driver')
                 self.assertIsNone(tune.status()['bulk_in_bytes'])
@@ -78,7 +78,7 @@ class TuningTests(unittest.TestCase):
                 (module/'parameters/uta_bulk_in_bytes').write_text('4096')
                 (module/'parameters/uta_bulk_out_bytes').write_text('32')
                 self.assertEqual(tune.status()['state'],'external_driver')
-                (module/'parameters/uta_bulk_out_bytes').write_text('4096')
+                (module/'parameters/uta_bulk_out_bytes').write_text('8192')
                 (module/'version').write_text('uta-preview7')
                 self.assertEqual(tune.status()['state'],'external_driver')
 
@@ -88,6 +88,34 @@ class TuningTests(unittest.TestCase):
         with patch.object(tune,'status',return_value={'ports':[]}), patch.object(tune,'read',return_value='none [integrity]'):
             with self.assertRaisesRegex(RuntimeError,'lockdown'): tune.idle(True)
             tune.idle(False)  # Rollback to signed system driver is still allowed.
+
+    def test_only_known_legacy_layouts_are_upgradable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); module = root / tune.MODULE
+            (module / 'parameters').mkdir(parents=True)
+            with patch.object(tune, 'SYS_MODULE', root), patch.object(tune, 'SERIAL_DRIVER', root / 'ports'):
+                (module / 'parameters/uta_bulk_out_bytes').write_text('4096')
+                for version in ('uta-preview7', 'uta-ch341-rx1', 'uta-ch341-tx2-test', 'unknown'):
+                    (module / 'version').write_text(version)
+                    param = module / 'parameters/uta_bulk_in_bytes'
+                    param.unlink(missing_ok=True)
+                    if version != 'uta-preview7': param.write_text('4096')
+                    info = tune.status()
+                    self.assertEqual(info['state'], 'external_driver')
+                    self.assertEqual(info['legacy_driver'], version in ('uta-preview7', 'uta-ch341-rx1'))
+                (module / 'version').write_text('uta-ch341-rx1')
+                (module / 'parameters/uta_bulk_out_bytes').write_text('32')
+                self.assertFalse(tune.status()['legacy_driver'])
+
+    def test_large_write_setup_precedes_publication_and_termios(self):
+        for kernel in ('5.4.0-162-generic', '5.15.0-173-generic'):
+            text = tune.source(kernel)
+            probe = text[text.index('static int ch341_port_probe('):text.index('static void ch341_port_remove(')]
+            self.assertLess(probe.index('kfifo_alloc(&larger_fifo, 8192, GFP_KERNEL)'), probe.index('kfifo_free('))
+            self.assertIn('if (r)\n\t\t\treturn r;', probe)
+            self.assertLess(probe.index('port->write_fifo = larger_fifo'), probe.index('ch341_configure('))
+            opening = text[text.index('static int ch341_open('):].split('\nstatic ', 1)[0]
+            self.assertLess(opening.index('set_bit(TTY_NO_WRITE_SPLIT'), opening.index('ch341_set_termios('))
 
     def test_unrecognized_module_is_never_unloaded(self):
         with patch.object(tune,'root_only'), patch.object(tune,'status',return_value={'state':'external_driver'}), patch.object(tune,'run') as run:

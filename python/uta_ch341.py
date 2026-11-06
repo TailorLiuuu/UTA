@@ -19,7 +19,7 @@ import tempfile
 SOURCE_SHA256 = '0568953df7e73445ca16e21e685a8c06a3c33891e6976be34e28f6eee7cd1912'
 SOURCE_GZIP_B64 = ''  # Filled by scripts/build-server.py; no runtime downloads.
 MODULE = 'ch341_uta'
-REVISION = 'uta-ch341-rx1'
+REVISION = 'uta-ch341-tx2'
 STORE = Path('/var/lib/uta-ch341')
 SYS_MODULE = Path('/sys/module')
 SERIAL_DRIVER = Path('/sys/bus/usb-serial/drivers/ch341-uart')
@@ -42,14 +42,35 @@ def status():
     loaded = (SYS_MODULE / MODULE).exists()
     managed = (read(SYS_MODULE / MODULE / 'version') == REVISION and
                read(SYS_MODULE / MODULE / 'parameters/uta_bulk_in_bytes') == '4096' and
-               read(SYS_MODULE / MODULE / 'parameters/uta_bulk_out_bytes') == '4096')
+               read(SYS_MODULE / MODULE / 'parameters/uta_bulk_out_bytes') == '8192')
     state = 'enabled' if loaded and managed else ('external_driver' if loaded else 'disabled')
+    loaded_revision = read(SYS_MODULE / MODULE / 'version')
+    legacy = (loaded and read(SYS_MODULE / MODULE / 'parameters/uta_bulk_out_bytes') == '4096' and (
+              (loaded_revision == 'uta-preview7' and
+               not (SYS_MODULE / MODULE / 'parameters/uta_bulk_in_bytes').exists()) or
+              (loaded_revision == 'uta-ch341-rx1' and
+               read(SYS_MODULE / MODULE / 'parameters/uta_bulk_in_bytes') == '4096')))
+    dependencies = missing_dependencies(kernel)
+    lockdown = read(Path('/sys/kernel/security/lockdown'))
     return dict(state=state, kernel=kernel, supported=supported(kernel),
+                setup_available=True, legacy_driver=legacy,
+                missing_dependencies=dependencies,
+                dependency_install_supported=Path('/usr/bin/apt-get').is_file(),
+                lockdown=('[integrity]' in lockdown or '[confidentiality]' in lockdown),
                 bulk_in_bytes=4096 if loaded and managed else None,
-                bulk_out_bytes=4096 if loaded and managed else None,
+                bulk_out_bytes=8192 if loaded and managed else None,
                 build_available=(Path('/lib/modules') / kernel / 'build/Makefile').is_file(),
                 ports=sorted(p.name for p in SERIAL_DRIVER.glob('ttyUSB*')),
-                persistent=False, revision=REVISION)
+                persistent=False, revision=REVISION, loaded_revision=loaded_revision or None)
+
+
+def missing_dependencies(kernel):
+    packages = []
+    if not all(shutil.which(tool, path=ENV['PATH']) for tool in ('make', 'gcc', 'ld')):
+        packages.append('build-essential')
+    if not (Path('/lib/modules') / kernel / 'build/Makefile').is_file():
+        packages.append('linux-headers-' + kernel)
+    return packages
 
 
 def root_only():
@@ -94,11 +115,34 @@ def source(kernel=None):
         raise RuntimeError('Unexpected CH341 source layout')
     text = text.replace(needle, needle +
                         '\n\t.bulk_in_size      = 4096, /* USB/IP: drain UART bursts locally */' +
-                        '\n\t.bulk_out_size     = 4096, /* USB/IP: amortize network round trips */')
+                        '\n\t.bulk_out_size     = 8192, /* USB/IP: amortize network round trips */')
+    # Keep a userspace write slightly larger than 4 KiB in one USB request.
+    # The TTY layer otherwise splits at 2 KiB, and usb-serial's default FIFO
+    # is PAGE_SIZE. Resize only during probe, before any tty can be opened;
+    # usb-serial core owns/frees the replacement FIFO on all cleanup paths.
+    include = '#include <linux/kernel.h>'
+    probe = ('static int ch341_port_probe(struct usb_serial_port *port)\n{\n'
+             '\tstruct ch341_private *priv;\n\tint r;\n')
+    opening = ('static int ch341_open(struct tty_struct *tty, struct usb_serial_port *port)\n{\n'
+               '\tstruct ch341_private *priv = usb_get_serial_port_data(port);\n\tint r;\n')
+    if any(text.count(anchor) != 1 for anchor in (include, probe, opening)):
+        raise RuntimeError('Unexpected CH341 transmit setup layout')
+    text = text.replace(include, include + '\n#include <linux/kfifo.h>')
+    text = text.replace(probe, probe +
+        '\tstruct kfifo larger_fifo;\n\n'
+        '\t/* Probe runs before the tty is published; no queued bytes or writers. */\n'
+        '\tif (port->bulk_out_size && kfifo_size(&port->write_fifo) < 8192) {\n'
+        '\t\tr = kfifo_alloc(&larger_fifo, 8192, GFP_KERNEL);\n'
+        '\t\tif (r)\n\t\t\treturn r;\n'
+        '\t\tkfifo_free(&port->write_fifo);\n'
+        '\t\tport->write_fifo = larger_fifo;\n\t}\n')
+    text = text.replace(opening, opening +
+        '\n\t/* Preserve userspace write boundaries up to the tty core limit. */\n'
+        '\tif (tty)\n\t\tset_bit(TTY_NO_WRITE_SPLIT, &tty->flags);\n')
     text += '\nstatic unsigned int uta_bulk_in_bytes = 4096;\n'
     text += 'module_param(uta_bulk_in_bytes, uint, 0444);\n'
     text += 'MODULE_PARM_DESC(uta_bulk_in_bytes, "Fixed USB/IP receive buffer; read only");\n'
-    text += '\nstatic unsigned int uta_bulk_out_bytes = 4096;\n'
+    text += '\nstatic unsigned int uta_bulk_out_bytes = 8192;\n'
     text += 'module_param(uta_bulk_out_bytes, uint, 0444);\n'
     text += 'MODULE_PARM_DESC(uta_bulk_out_bytes, "Fixed USB/IP transmit buffer; read only");\n'
     text += f'MODULE_VERSION("{REVISION}");\n'
@@ -233,7 +277,42 @@ def disable():
     return status()
 
 
-def dispatch(action):
+def setup(install_dependencies=False):
+    """Explicit administrator action; never changes a live USB driver."""
+    root_only()
+    kernel = require_supported()
+    info = status()
+    if info['state'] == 'enabled':
+        return info
+    if info['state'] == 'external_driver' and not info['legacy_driver']:
+        raise RuntimeError('Unrecognized CH341 driver; administrator review is required')
+    idle(check_lockdown=True)
+    packages = missing_dependencies(kernel)
+    if packages:
+        if not install_dependencies or not Path('/usr/bin/apt-get').is_file():
+            raise RuntimeError('Install missing build dependencies first: ' + ', '.join(packages))
+        # Fixed package names only; no distribution upgrade, sudoers or boot changes.
+        run(['/usr/bin/env', 'DEBIAN_FRONTEND=noninteractive', '/usr/bin/apt-get',
+             '-o', 'DPkg::Lock::Timeout=60', 'update'], timeout=240)
+        run(['/usr/bin/env', 'DEBIAN_FRONTEND=noninteractive', '/usr/bin/apt-get',
+             '-o', 'DPkg::Lock::Timeout=60', 'install', '-y', '--no-install-recommends',
+             *packages], timeout=600)
+        if missing_dependencies(kernel):
+            raise RuntimeError('Build dependencies are still unavailable after installation')
+    build()  # Build before unloading any working driver.
+    idle(check_lockdown=True)  # Devices may have arrived during the build.
+    fresh = status()
+    if fresh['state'] == 'enabled':
+        return fresh
+    if fresh['state'] == 'external_driver':
+        if not fresh['legacy_driver']:
+            raise RuntimeError('CH341 driver changed during setup; no module was unloaded')
+        run(['/sbin/rmmod', MODULE])
+        run(['/sbin/modprobe', 'ch341'])
+    return enable()
+
+
+def dispatch(action, install_dependencies=False):
     if action == 'status':
         return status()
     # Serialize privileged builds and module switches across concurrent callers.
@@ -247,6 +326,8 @@ def dispatch(action):
         with os.fdopen(fd, 'w') as handle:
             fd = None
             fcntl.flock(handle, fcntl.LOCK_EX)
+            if action == 'setup':
+                return setup(install_dependencies)
             return {'build': build, 'enable': enable, 'disable': disable}[action]()
     finally:
         if fd is not None:

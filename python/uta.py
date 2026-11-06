@@ -23,6 +23,7 @@ import time
 import uuid
 from uta_diagnostics import inspect_devices, connection_error
 import uta_privileged
+import uta_optimization
 
 VERSION = "0.1.0"
 HERE = Path(__file__).resolve().parent
@@ -345,6 +346,7 @@ class Controller:
                             message="本地已断开，正在自动清理云端会话…")
                 self.sessions[item["busid"]] = item
         self.checks = {}
+        self.optimizations = {}
         self.agent_installing = set()
         self.processes = {}
         self.busy = set()
@@ -426,7 +428,33 @@ class Controller:
             return copy.deepcopy(dict(version=VERSION, servers=self.config["servers"],
                          devices=self.devices, sessions=list(self.sessions.values()),
                          checks=self.checks, scan_error=self.scan_error,
+                         optimizations=self.optimizations,
                          home=str(HOME), busy=sorted(self.busy), local_access=self.local_access))
+
+    def optimize_server(self, server, interactive=False):
+        sid = server['id']
+        directory = HOME / 'optimization-jobs' / uuid.uuid4().hex
+        try:
+            uta_optimization.execute(server, ssh_args(server), agent_source(), REMOTE,
+                                     directory, interactive)
+            # Exit status is not proof of an enabled module. Read it back via a
+            # fresh SSH connection before displaying success.
+            info = remote_json(server, ['tune-ch341', 'status'], privileged=False)
+            if (info.get('state') != 'enabled' or info.get('bulk_in_bytes') != 4096
+                    or info.get('bulk_out_bytes') != 8192
+                    or info.get('revision') != 'uta-ch341-tx2'):
+                raise RuntimeError('服务器尚未确认优化已启用，请重新检测')
+            self.check_server(server)
+            with self.lock:
+                self.optimizations[sid] = dict(state='enabled', message='服务器优化已启用，重启后可再次一键启用',
+                                               log=str(directory / 'setup.log'))
+        except uta_optimization.AuthorizationRequired as exc:
+            with self.lock:
+                self.optimizations[sid] = dict(state='authorization_required', message=str(exc))
+        except Exception as exc:
+            with self.lock:
+                self.optimizations[sid] = dict(state='error', message=str(exc),
+                                               log=str(directory / 'setup.log'))
 
     def server_in_use(self, sid):
         return any(s["server_id"] == sid and (
@@ -486,10 +514,18 @@ class Controller:
                                        message="SSH 和虚拟 USB 已就绪" if ready else info["message"],
                                        details=info, agent_update=agent_update, checked=time.time())
         except Exception as exc:
+            details = None
+            if agent_status == 'installed':
+                # Tuning status is read-only. A password-only sudo account can
+                # inspect it even if the ordinary attach permission check fails.
+                try:
+                    details = dict(ch341_tuning=remote_json(server, ['tune-ch341', 'status'], privileged=False))
+                except Exception:
+                    pass
             with self.lock:
                 self.checks[sid] = dict(state="error", agent_status=agent_status,
                                        message=str(exc) + ("；可通过「手动安装」在终端交互授权" if install else ""),
-                                       checked=time.time())
+                                       details=details, checked=time.time())
 
     def cleanup(self, busid):
         with self.lock:
@@ -633,6 +669,8 @@ class Controller:
             with self.lock:
                 if server['id'] in self.agent_installing:
                     raise RuntimeError("云端代理正在更新，请完成后再接入设备")
+                if self.optimizations.get(server['id'], {}).get('state') == 'running':
+                    raise RuntimeError('服务器正在配置优化，请完成后再接入设备')
                 device = next((d for d in self.devices if d["busid"] == busid), None)
                 if not device:
                     raise RuntimeError("USB 设备已拔出，请刷新后重新选择")
@@ -963,7 +1001,24 @@ class Controller:
                         raise
                 else:
                     self.background(server["id"], lambda: self.check_server(server))
+                self.optimizations.pop(server['id'], None)
             return {"started": True}
+        if action == 'server_optimize':
+            server = self.server(request['id'])
+            interactive = request.get('interactive', False)
+            if not isinstance(interactive, bool):
+                raise ValueError('Invalid authorization mode')
+            with self.lock:
+                if any(s['server_id'] == server['id'] and
+                       (s['state'] in ACTIVE | {'disconnecting'} or s['busid'] in self.busy
+                        or s.get('remote_cleanup_pending')) for s in self.sessions.values()):
+                    raise RuntimeError('请先断开此服务器上的 USB 并等待清理完成，再启用优化')
+                # Reserve the server before new attaches can enter.
+                self.background(server['id'], lambda: self.optimize_server(server, interactive))
+                self.optimizations[server['id']] = dict(state='running', message=(
+                    '请在打开的终端完成授权，UTA 将自动配置服务器' if interactive else
+                    '正在准备依赖、编译并启用服务器优化，可能需要几分钟…'))
+            return {'started': True}
         if action == "server_manual":
             return manual_install_plan(self.server(request["id"]))
         if action in ("reconnect_confirm", "reconnect_reject", "reconnect_forget"):
@@ -1053,6 +1108,8 @@ class Controller:
                     self.require_assignment_available(busid, server)
                     if server['id'] in self.agent_installing:
                         raise RuntimeError("云端代理正在更新，请完成后再接入设备")
+                    if self.optimizations.get(server['id'], {}).get('state') == 'running':
+                        raise RuntimeError('服务器正在配置优化，请完成后再接入设备')
                     if not any(d["busid"] == busid for d in self.devices):
                         raise ValueError("设备未连接到本机")
                     self.background(busid, lambda: self.connect(busid, server, mode, reconnect, allowed_ids=ids))
@@ -1179,9 +1236,11 @@ def main():
     add.add_argument("--port", type=int, default=22)
     add.add_argument("--identity", default="")
     add.add_argument("--use-ssh-config", action="store_true", help="inherit SSH port and identities")
-    for cmd in ("remove", "check", "install", "manual"):
+    for cmd in ("remove", "check", "install", "manual", "optimize"):
         p = server.add_parser(cmd)
         p.add_argument("id")
+        if cmd == 'optimize':
+            p.add_argument('--interactive', action='store_true', help='Open Terminal for administrator authorization')
     con = sub.add_parser("connect")
     con.add_argument("--device", required=True, help="busid from devices")
     con.add_argument("--server", required=True, help="ID from server list")
@@ -1217,6 +1276,8 @@ def main():
                 data = {"action": "server_import", "aliases": args.aliases}
             else:
                 data = {"action": "server_" + cmd, "id": args.id}
+                if cmd == 'optimize':
+                    data['interactive'] = args.interactive
         elif args.command == "connect":
             data = dict(action="connect", busid=args.device, server_id=args.server, access_mode=args.access)
             if args.reconnect:

@@ -212,11 +212,28 @@ struct AgentDetails: Decodable {
 struct SerialTuning: Decodable {
     let state: String
     let supported: Bool
+    let bulkInBytes: Int?
+    let bulkOutBytes: Int?
+    let lockdown: Bool?
+    let legacyDriver: Bool?
+    let revision: String?
+    var current: Bool {
+        state == "enabled" && bulkInBytes == 4096 && bulkOutBytes == 8192 && revision == "uta-ch341-tx2"
+    }
     var message: String {
-        if state == "enabled" { return L("CH340 串口加速已启用 · 重启后需重新启用") }
+        if current {
+            return L("CH340 串口加速已启用 · 重启后需重新启用")
+        }
+        if state == "enabled" || legacyDriver == true { return L("已启用旧版优化，可一键升级高速传输优化") }
+        if lockdown == true { return L("服务器内核安全策略不允许加载此优化驱动") }
         if state == "external_driver" { return L("检测到其他 CH340 测试驱动") }
         return supported ? L("CH340 串口加速可选启用") : L("此内核暂不支持 CH340 加速配置")
     }
+}
+struct ServerOptimization: Decodable {
+    let state: String
+    let message: String
+    let log: String?
 }
 struct Snapshot: Decodable {
     let servers: [Host]
@@ -227,8 +244,9 @@ struct Snapshot: Decodable {
     let home: String
     let busy: [String]
     let localAccess: LocalUSBAccess?
+    let optimizations: [String: ServerOptimization]?
     static let empty = Snapshot(servers: [], devices: [], sessions: [], checks: [:],
-                                scanError: "", home: "", busy: [], localAccess: nil)
+                                scanError: "", home: "", busy: [], localAccess: nil, optimizations: nil)
 }
 struct LocalUSBAccess: Decodable {
     let available: Bool
@@ -791,6 +809,8 @@ struct ContentView: View {
     @State private var removing: Host?
     @State private var importing = false
     @State private var manualHost: Host?
+    @State private var optimizeHost: Host?
+    @State private var optimizeInteractive = false
     @State private var chosenDevices: Set<String> = []
     @State private var submitting = false
     var selected: Host? { model.selected.flatMap { model.host($0) } }
@@ -908,6 +928,19 @@ struct ContentView: View {
             }
         }
         .onChange(of: model.selected) { _, _ in chosenDevices.removeAll() }
+        .confirmationDialog(L("启用服务器 USB 优化？"), isPresented: Binding(
+            get: { optimizeHost != nil }, set: { if !$0 { optimizeHost = nil } })) {
+            if let host = optimizeHost {
+                Button(L("在 \(host.name) 上启用")) {
+                    let interactive = optimizeInteractive
+                    optimizeHost = nil
+                    Task { await model.call(["action": "server_optimize", "id": host.id, "interactive": interactive]) }
+                }
+                Button(L("取消"), role: .cancel) { optimizeHost = nil }
+            }
+        } message: {
+            Text(L("将更新云端代理、准备缺失的编译依赖并启用 CH340/CH341 优化。需要服务器管理员权限；请先断开该服务器的 USB。烧录仍使用原来的工具。"))
+        }
         .onChange(of: selectableDeviceIDs) { _, ids in
             chosenDevices.formIntersection(ids)
         }
@@ -1083,18 +1116,7 @@ struct ContentView: View {
                     .padding(12).background(update.available ? Color.orange.opacity(0.07) : Color.clear,
                                             in: RoundedRectangle(cornerRadius: 9))
             }
-            if let tuning = check?.details?.ch341Tuning {
-                HStack {
-                    Label(tuning.message, systemImage: "speedometer")
-                        .font(.system(size: 11)).foregroundStyle(muted)
-                    Spacer()
-                    Button(L("串口加速指南")) {
-                        if let url = Bundle.main.resourceURL?.appendingPathComponent("docs/CH340-TUNING.md") {
-                            NSWorkspace.shared.open(url)
-                        }
-                    }.font(.system(size: 11))
-                }
-            }
+            optimizationPanel(host)
             HStack(spacing: 10) {
                 Button(L("手动安装"), systemImage: "terminal") { manualHost = host }.disabled(inUse)
                 Text(check?.state == "error" ? L("自动安装或权限检查失败时，可在终端交互授权。") : L("在终端执行安装命令，或导出脚本交给管理员。"))
@@ -1120,6 +1142,52 @@ struct ContentView: View {
         case "newer": return L("云端代理版本更新，无需覆盖")
         default: return L("暂时无法检查云端更新，请重新检查连接")
         }
+    }
+
+    func optimizationPanel(_ host: Host) -> some View {
+        let tuning = model.state.checks[host.id]?.details?.ch341Tuning
+        let operation = model.state.optimizations?[host.id]
+        let running = operation?.state == "running"
+        let authorized = operation?.state == "authorization_required"
+        let enabled = tuning?.current == true
+        return VStack(alignment: .leading, spacing: 9) {
+            HStack {
+                Label(L("服务器 USB 优化"), systemImage: "speedometer").font(.system(size: 12, weight: .semibold))
+                Spacer()
+                Button {
+                    Task { await model.call(["action": "server_check", "id": host.id]) }
+                } label: { Image(systemName: "arrow.clockwise") }
+                    .help(L("检测服务器优化状态")).disabled(model.state.busy.contains(host.id))
+                if enabled && !running {
+                    Label(L("已启用"), systemImage: "checkmark.circle.fill").foregroundStyle(accent)
+                } else {
+                    Button(authorized ? L("授权并启用") : L("一键启用")) {
+                        optimizeInteractive = authorized
+                        optimizeHost = host
+                    }.disabled(serverInUse(host) || model.state.busy.contains(host.id) || tuning?.supported == false || tuning?.lockdown == true)
+                }
+            }.font(.system(size: 11))
+            if running { ProgressView().controlSize(.small) }
+            if let operation, operation.state != "enabled" {
+                Text(D(operation.message)).font(.system(size: 11))
+                    .foregroundStyle(operation.state == "error" ? Color.orange : muted)
+                    .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text(tuning?.message ?? L("检测后可一键安装代理并启用支持的优化"))
+                    .font(.system(size: 11)).foregroundStyle(muted)
+            }
+            HStack {
+                Text(L("仅优化通用 USB 传输；服务器重启后可再次启用。"))
+                    .font(.system(size: 10)).foregroundStyle(muted)
+                Spacer()
+                if let log = operation?.log {
+                    Button(L("查看配置日志")) { NSWorkspace.shared.open(URL(fileURLWithPath: log)) }.font(.system(size: 10))
+                }
+                Button(L("串口加速指南")) {
+                    if let url = Bundle.main.resourceURL?.appendingPathComponent("docs/CH340-TUNING.md") { NSWorkspace.shared.open(url) }
+                }.font(.system(size: 10))
+            }
+        }.padding(12).background(.white.opacity(0.7), in: RoundedRectangle(cornerRadius: 9))
     }
 
     func deviceActions(_ host: Host) -> some View {
