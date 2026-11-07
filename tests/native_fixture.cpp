@@ -11,12 +11,15 @@
 #include <libusb.h>
 
 using namespace usbipdcpp;
+static bool hold_transfers = false;
 class Echo : public AbstDeviceHandler {
     data_type last;
+    std::vector<TransferHandle> held;
 public:
     explicit Echo(UsbDevice &dev) : AbstDeviceHandler(dev) {}
     void receive_urb(UsbIpCommand::UsbIpCmdSubmit cmd, UsbEndpoint,
                      std::optional<UsbInterface>, error_code &) override {
+        if (hold_transfers) { held.push_back(std::move(cmd.transfer)); return; }
         auto *t = GenericTransfer::from_handle(cmd.transfer.get());
         if (cmd.header.direction == 0) {
             last = t->data;
@@ -30,6 +33,7 @@ public:
                 create_ret_submit_ok_with_no_iso(cmd.header.seqnum, length, std::move(cmd.transfer)));
         }
     }
+    void on_disconnection(error_code &ec) override { held.clear(); AbstDeviceHandler::on_disconnection(ec); }
     void handle_unlink_seqnum(uint32_t, uint32_t seq) override {
         responder->submit_ret_unlink(UsbIpResponse::UsbIpRetUnlink::create_ret_unlink_success(seq));
     }
@@ -59,6 +63,31 @@ int main(int argc, char **argv) {
         }
         return 0;
     }
+    if (argc == 2 && std::string(argv[1]) == "--budget") {
+        auto budget = std::make_shared<ResourceBudget>(1024, 2);
+        TransferHandle first; first.reserve(budget, 512);
+        TransferHandle second; second.reserve(budget, 512);
+        try { TransferHandle rejected; rejected.reserve(budget, 1); return 3; }
+        catch (const std::system_error &) {}
+        if (budget->bytes != 1024 || budget->requests != 2) return 4;
+        TransferHandle moved(std::move(first)); first.reset();
+        if (budget->requests != 2) return 5;
+        second = std::move(moved);
+        if (budget->bytes != 512 || budget->requests != 1) return 6;
+        second.reset();
+        if (budget->bytes || budget->requests) return 7;
+        auto one = std::make_shared<ResourceBudget>(256 * 1024 * 1024, 1024);
+        auto two = std::make_shared<ResourceBudget>(256 * 1024 * 1024, 1024);
+        TransferHandle a, b;
+        a.reserve(one, 128 * 1024 * 1024);
+        b.reserve(two, 128 * 1024 * 1024);
+        try { TransferHandle rejected; rejected.reserve(budget, 1); return 8; }
+        catch (const std::system_error &) {}
+        a.reset(); b.reset();
+        first.reserve(budget, 1); first.reset();
+        std::cout << "budget lifetime passed" << std::endl; return 0;
+    }
+    hold_transfers = argc == 2 && std::string(argv[1]) == "--hold";
     std::vector<UsbInterface> interfaces{
         UsbInterface{.interface_class = 0xff, .endpoints = {{
             UsbEndpoint{.address = 0x81, .attributes = 2, .max_packet_size = 64},
@@ -67,7 +96,7 @@ int main(int argc, char **argv) {
     device->with_handler<Echo>();
     Server server;
     server.add_device(std::move(device));
-    if (argc == 2 && std::string(argv[1]) == "--stream") {
+    if ((argc == 2 && std::string(argv[1]) == "--stream") || (argc == 5 && std::string(argv[1]) == "export-stream")) {
         if (server.start_stream(STDIN_FILENO)) return 1;
         std::cout << "ready" << std::endl;
         while (server.get_session_count() > 0) std::this_thread::sleep_for(std::chrono::milliseconds(10));

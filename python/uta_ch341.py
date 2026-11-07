@@ -345,4 +345,14 @@ def bundle_agent(agent):
     bootstrap = 'import types\nuta_ch341 = types.ModuleType("uta_ch341")\nexec(compile(' + repr(module) + ', "<bundled uta_ch341>", "exec"), uta_ch341.__dict__)'
     if agent.count('import uta_ch341\n') != 1:
         raise RuntimeError('Unexpected agent import layout')
-    return agent.replace('import uta_ch341\n', bootstrap + '\n')
+    auth = Path(__file__).with_name('uta_auth.py').read_text()
+    auth_bootstrap = 'uta_auth = types.ModuleType("uta_auth")\nexec(compile(' + repr(auth) + ', "<bundled uta_auth>", "exec"), uta_auth.__dict__)'
+    if agent.count('import uta_auth\n') != 1:
+        raise RuntimeError('Unexpected agent authentication import layout')
+    identity = Path(__file__).with_name('uta_client.py').read_text()
+    identity_bootstrap = 'uta_client = types.ModuleType("uta_client")\nexec(compile(' + repr(identity) + ', "<bundled uta_client>", "exec"), uta_client.__dict__)'
+    if agent.count('import uta_client\n') != 1:
+        raise RuntimeError('Unexpected agent client identity import layout')
+    return (agent.replace('import uta_ch341\n', bootstrap + '\n')
+            .replace('import uta_auth\n', auth_bootstrap + '\n')
+            .replace('import uta_client\n', identity_bootstrap + '\n'))

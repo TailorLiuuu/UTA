@@ -6,14 +6,14 @@ UTA 将 Mac 上选定的真实 USB 设备，通过 SSH 接入远程 Linux 服务
 服务器上的工具直接使用虚拟 USB 和对应串口，固件与编译环境留在服务器，
 无需来回下载文件到本机烧录。
 
-**当前状态：0.1 实验原型，build 25（Preview 13）。** 已完成部分开发板实机验证，尚未完成通用 USB
+**当前状态：0.1 实验原型，build 26（Preview 14）。** 已完成部分开发板实机验证，尚未完成通用 USB
 兼容性验收。当前支持 **macOS Apple Silicon → Linux**，没有 Windows 或 iOS 客户端。
 提供预编译安装包与源码。预览版已签名，但尚未经过 Apple 公证。
 
 ## 下载 Mac 预览版
 
-**[下载 DMG 安装包](https://github.com/TailorLiuuu/UTA/releases/download/v0.1.0-preview.13/UTA-0.1.0-macOS-arm64.dmg)** ·
-[Release 与 ZIP 备用包](https://github.com/TailorLiuuu/UTA/releases/tag/v0.1.0-preview.13) ·
+**[下载 DMG 安装包](https://github.com/TailorLiuuu/UTA/releases/download/v0.1.0-preview.14/UTA-0.1.0-macOS-arm64.dmg)** ·
+[Release 与 ZIP 备用包](https://github.com/TailorLiuuu/UTA/releases/tag/v0.1.0-preview.14) ·
 [首次安装指南](docs/INSTALL-macOS.md)
 
 适用于 Apple Silicon / macOS 26，需另行安装 Python 3.9+。打开 DMG，将 UTA 拖入
@@ -37,6 +37,8 @@ Preview 9 修复未接入设备的后台扫描占用：macOS 列表只读取系�
 Preview 10 在服务器页面提示云端 CLI 更新，显示云端与本机自带版本；点击后才安装并校验，设备使用中需先断开。Mac 升级不会自动覆盖云端代理。详见 [更新说明](docs/UPDATES.md)。
 
 Preview 11 禁止跨服务器抢占已分配的 USB：其他服务器页面不可选；需先断开原连接并等待清理完成，再分配到新服务器。等待重连期间也保持原归属，CLI 遵循相同限制。
+
+Preview 14 增加独立会话认证、客户端凭据及资源上限。共用 root 时，常规云端 CLI 也只管理当前客户端的设备；无凭据会报错，管理员需显式使用 `--admin`。升级需要两端配套，请先完成旧连接并断开清理。见 [客户端上下文指南](docs/CLIENT-IDENTITY.md) 与 [安全边界](docs/SECURITY.md)。
 
 ## 可选 CH340 串口加速
 
@@ -181,16 +183,18 @@ UTA="/Applications/UTA.app/Contents/Resources/uta"
 返回 `started: true` 只表示任务已接受；需要继续查询 `status`，确认 `attached` 或具体错误。
 `uta stop` 停止本地后台并释放连接。
 
-远程开发会话调用服务器 CLI：
+远程开发会话先按 [客户端上下文指南](docs/CLIENT-IDENTITY.md) 配置自己的凭据，再调用服务器 CLI。
+即使大家都登录 root，常规命令也只显示、管理对应客户端的设备；无上下文时会报错。
 
 ```bash
-sudo -n uta-server list
-sudo -n uta-server status --session SESSION_ID
+sudo -n uta-server list --client-file /path/to/my-client.json
+sudo -n uta-server status --session SESSION_ID --client-file /path/to/my-client.json
+sudo -n uta-server resolve --route ROUTE_ID --client-file /path/to/my-client.json
 ```
 
 响应包含 `state`、`session`、`route_id`、来源 `busid`、`vidpid` 和 `nodes`。
 按目标设备身份选择节点，然后调用项目已有的烧录/调试工具。不要默认选择第一个串口。
-`uta-server` 提供 `doctor`、`list`、`status`、`attach`、`detach`、`tune-ch341`，挂载通常由 Mac 控制器管理；
+`uta-server` 提供 `doctor`、`list`、`status`、`resolve`、`attach`、`detach`、`tune-ch341`，挂载通常由 Mac 控制器管理；
 没有内置 `flash` 命令。
 
 ## 模式切换与自动重连

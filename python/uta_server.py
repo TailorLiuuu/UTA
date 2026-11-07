@@ -13,12 +13,15 @@ from pathlib import Path
 import re
 import socket
 import struct
+import stat
 import subprocess
 import sys
 import time
 import uta_ch341
+import uta_auth
+import uta_client
 
-VERSION = "0.1.0-preview.13"
+VERSION = "0.1.0-preview.14"
 VHCI = Path("/sys/devices/platform/vhci_hcd.0")
 STATE = Path("/run/uta")
 # Keep existing live session records accessible when upgrading an older agent.
@@ -80,7 +83,18 @@ def validate_session(value):
 
 
 def owner():
-    return int(os.environ.get("SUDO_UID", os.getuid()))
+    value = os.environ.get("SUDO_UID", str(os.getuid()))
+    if not re.fullmatch(r"0|[1-9][0-9]{0,9}", value) or int(value) > 0xfffffffe:
+        raise PermissionError("Invalid SSH account identity")
+    return int(value)
+
+
+def trusted_state_file(fd):
+    info = os.fstat(fd)
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+        raise PermissionError("Unsafe UTA state file owner or permissions")
+    if info.st_mode & 0o077:
+        os.fchmod(fd, 0o600)
 
 
 @contextlib.contextmanager
@@ -88,15 +102,37 @@ def locked():
     if os.geteuid() != 0:
         raise PermissionError("Use sudo -n uta-server for attach/detach/list operations")
     STATE.mkdir(mode=0o700, parents=True, exist_ok=True)
-    with (STATE / "lock").open("a") as handle:
+    info = STATE.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o077:
+        raise PermissionError("Unsafe UTA state directory")
+    fd = os.open(STATE / "lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "a") as handle:
+        trusted_state_file(handle.fileno())
         fcntl.flock(handle, fcntl.LOCK_EX)
         yield
 
 
-def read_record(session):
-    record = json.loads((STATE / f"{validate_session(session)}.json").read_text())
-    if owner() != 0 and record["owner"] != owner():
-        raise PermissionError("Session belongs to a different SSH user")
+def client_scope(client=None, admin=False):
+    if admin:
+        if owner() != 0:
+            raise PermissionError('Administrator mode requires an actual root login')
+        return None
+    if client is None:
+        raise PermissionError('UTA client credential required; use --client-file or UTA_CLIENT_CREDENTIAL_FILE')
+    return uta_client.validate(client)['client_id']
+
+
+def read_record(session, client=None, admin=False):
+    scope = client_scope(client, admin)
+    fd = os.open(STATE / f"{validate_session(session)}.json", os.O_RDONLY | os.O_NOFOLLOW)
+    with os.fdopen(fd) as handle:
+        trusted_state_file(handle.fileno())
+        raw = handle.read(65537)
+    if len(raw) > 65536:
+        raise ValueError("UTA session record is too large")
+    record = json.loads(raw)
+    if not admin and (record.get('client_id') != scope or record['owner'] != owner()):
+        raise PermissionError('Session is not owned by this UTA client')
     return record
 
 
@@ -132,6 +168,21 @@ def matching_port(record):
     return row if row["devid"] == record["devid"] and row["socket"] == record.get("socket") else None
 
 
+def restrict_device_node(path, expected_dev, uid):
+    """Only discovered device nodes, never opening the serial port to chmod it.
+
+    /dev paths are managed by root/udev. Validate the major/minor before touching
+    permissions; the matching VHCI connection is checked again by the caller.
+    """
+    info = path.lstat()
+    major, minor = map(int, expected_dev.strip().split(':'))
+    if (not stat.S_ISCHR(info.st_mode) or os.major(info.st_rdev) != major
+            or os.minor(info.st_rdev) != minor):
+        raise PermissionError("USB device node identity changed")
+    os.chmod(path, 0o600)
+    os.chown(path, uid, 0, follow_symlinks=False)
+
+
 def record_status(record):
     row = matching_port(record)
     result = dict(record, state="disconnected", nodes=[])
@@ -140,6 +191,7 @@ def record_status(record):
                       local_busid=row["local_busid"])
         root = Path("/sys/bus/usb/devices") / row["local_busid"]
         if root.exists() and row["local_busid"] != "0-0":
+            node_specs = []
             # "Attached" means Linux has an enumerated USB device, not that a
             # vendor driver or flashing application has been validated.
             for cls in ("tty", "hidraw"):
@@ -147,15 +199,21 @@ def record_status(record):
                 for entry in base.glob("*"):
                     try:
                         if root.resolve() in (entry / "device").resolve().parents:
-                            result["nodes"].append("/dev/" + entry.name)
+                            node_specs.append((Path("/dev") / entry.name, (entry / "dev").read_text()))
                     except OSError:
                         pass
             try:
                 bus = int((root / "busnum").read_text())
                 dev = int((root / "devnum").read_text())
-                result["nodes"].append(f"/dev/bus/usb/{bus:03d}/{dev:03d}")
+                node_specs.append((Path(f"/dev/bus/usb/{bus:03d}/{dev:03d}"), (root / "dev").read_text()))
             except (OSError, ValueError):
                 pass
+            if not matching_port(record):
+                return dict(record, state="disconnected", nodes=[])
+            for node, device_number in node_specs:
+                restrict_device_node(node, device_number, record['owner'])
+                result['nodes'].append(str(node))
+            result['device_access'] = 'owner-only'
         else:
             result["state"] = "enumerating"
     return result
@@ -163,14 +221,21 @@ def record_status(record):
 
 def doctor():
     return dict(version=VERSION, platform=sys.platform, python=sys.version.split()[0],
-                route_identity=True, ch341_tuning=uta_ch341.status(),
+                route_identity=True, session_auth=uta_auth.PROTOCOL, client_identity=uta_client.PROTOCOL,
+                ch341_tuning=uta_ch341.status(),
                 uid=owner(), root=os.geteuid() == 0, vhci_available=VHCI.exists(),
                 free_ports=sum(p["status"] == 4 for p in ports()),
                 message="ready" if VHCI.exists() else "Run sudo modprobe vhci_hcd; kernel must include CONFIG_USBIP_VHCI_HCD")
 
 
-def attach(session, tcp_port, busid, route=None, auto_reconnect=False):
+def attach(session, tcp_port, busid, route=None, auto_reconnect=False, auth=None, client=None):
+    scope = client_scope(client)
     validate_session(session)
+    if auth is None:
+        raise PermissionError("Session authentication required; update the Mac app")
+    uta_auth.validate(auth)
+    if (auth['session'], auth['busid'], auth['owner_uid']) != (session, busid, owner()):
+        raise PermissionError("Session authentication owner or device mismatch")
     if route is not None:
         validate_session(route)
     if not 1024 <= tcp_port <= 65535 or not re.fullmatch(r"[0-9]+-[0-9.:]+", busid):
@@ -178,7 +243,7 @@ def attach(session, tcp_port, busid, route=None, auto_reconnect=False):
     with locked():
         path = STATE / f"{session}.json"
         if path.exists():
-            existing = read_record(session)
+            existing = read_record(session, client)
             status = record_status(existing)
             if status["state"] in ("attached", "enumerating"):
                 return status
@@ -188,6 +253,7 @@ def attach(session, tcp_port, busid, route=None, auto_reconnect=False):
                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         with socket.create_connection(("127.0.0.1", tcp_port), timeout=10) as sock:
             sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            uta_auth.client(sock, auth)
             sock.sendall(struct.pack("!HHI32s", 0x111, 0x8003, 0, busid.encode()))
             header(sock, 3)
             dev = descriptor(receive(sock, 312))
@@ -202,44 +268,60 @@ def attach(session, tcp_port, busid, route=None, auto_reconnect=False):
             (VHCI / "attach").write_text(f'{free["port"]} {sock.fileno()} {devid} {dev["speed"]}')
             try:
                 row = next(p for p in ports() if p["port"] == free["port"])
-                record = dict(session=session, owner=owner(), tcp_port=tcp_port, busid=busid,
+                record = dict(session=session, owner=owner(), client_id=scope, tcp_port=tcp_port, busid=busid,
                               route_id=route, reconnect_enabled=bool(auto_reconnect),
                               vidpid=dev["vidpid"], vhci_port=free["port"],
                               devid=devid, socket=row["socket"],
                               socket_inode=os.fstat(sock.fileno()).st_ino,
                               local_tcp_port=sock.getsockname()[1], created=time.time())
                 temp = path.with_suffix(".tmp")
-                temp.write_text(json.dumps(record))
-                temp.replace(path)
+                fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+                try:
+                    with os.fdopen(fd, 'w') as handle:
+                        handle.write(json.dumps(record))
+                    temp.replace(path)
+                finally:
+                    temp.unlink(missing_ok=True)
             except Exception:
                 (VHCI / "detach").write_text(str(free["port"]))
                 raise
         return record_status(record)
 
 
-def detach(session):
+def detach(session, client=None, admin=False):
+    client_scope(client, admin)
     with locked():
         path = STATE / f"{validate_session(session)}.json"
         if not path.exists():
             return dict(session=session, state="disconnected")
-        record = read_record(session)
+        record = read_record(session, client, admin)
         if matching_port(record):
             (VHCI / "detach").write_text(str(record["vhci_port"]))
         path.unlink()
         return dict(session=session, state="disconnected")
 
 
-def list_sessions(session=None):
+def list_sessions(session=None, client=None, admin=False):
+    client_scope(client, admin)
     with locked():
         if session:
-            return record_status(read_record(session))
+            return record_status(read_record(session, client, admin))
         result = []
         for path in STATE.glob("*.json"):
             try:
-                result.append(record_status(read_record(path.stem)))
+                result.append(record_status(read_record(path.stem, client, admin)))
             except PermissionError:
                 continue
         return result
+
+
+def resolve_route(route, client=None):
+    validate_session(route)
+    matches = [r for r in list_sessions(client=client)
+               if r.get('route_id') == route and r.get('state') == 'attached' and r.get('nodes')]
+    if len(matches) != 1:
+        raise RuntimeError('No unique ready device for this client and route; wait for reconnection and query again')
+    return matches[0]
 
 
 def main():
@@ -250,7 +332,7 @@ def main():
     tune.add_argument("action", choices=("status", "build", "enable", "disable", "setup"))
     tune.add_argument("--install-dependencies", action="store_true",
                       help="Allow setup to install missing build packages via apt-get")
-    sub.add_parser("list")
+    listing = sub.add_parser("list")
     status = sub.add_parser("status")
     status.add_argument("--session", required=True)
     add = sub.add_parser("attach")
@@ -258,25 +340,49 @@ def main():
     add.add_argument("--port", type=int, required=True)
     add.add_argument("--busid", required=True)
     add.add_argument("--route")
+    add.add_argument("--auth-stdin", action="store_true", help="Read one-use session credential from SSH stdin")
     add.add_argument("--auto-reconnect", action="store_true")
     remove = sub.add_parser("detach")
     remove.add_argument("--session", required=True)
+    resolve = sub.add_parser('resolve', help='Resolve an owned route to its current device nodes after reconnection')
+    resolve.add_argument('--route', required=True)
+    for command in (listing, status, add, remove, resolve):
+        group = command.add_mutually_exclusive_group()
+        group.add_argument('--client-stdin', action='store_true', help='Read client credential as the first line of stdin')
+        group.add_argument('--client-file', help='Private credential file; otherwise use UTA_CLIENT_CREDENTIAL_FILE')
+        if command in (listing, status, remove):
+            group.add_argument('--admin', action='store_true', help='Explicit root administrator access, including legacy/unowned sessions')
     args = parser.parse_args()
     try:
         if sys.platform != "linux":
             raise RuntimeError("This CLI must run on Linux, not on the Mac")
+        client = None
+        admin = getattr(args, 'admin', False)
+        if args.command in ('list', 'status', 'attach', 'detach', 'resolve'):
+            if admin:
+                client_scope(admin=True)
+            elif args.client_stdin:
+                client = uta_client.read_stream(sys.stdin.buffer)
+            else:
+                path = args.client_file or os.environ.get('UTA_CLIENT_CREDENTIAL_FILE')
+                if not path:
+                    client_scope()
+                client = uta_client.read_file(path, owners={0, owner()})
         if args.command == "tune-ch341":
             result = uta_ch341.dispatch(args.action, args.install_dependencies)
         elif args.command == "doctor":
             result = doctor()
         elif args.command == "list":
-            result = list_sessions()
+            result = list_sessions(client=client, admin=admin)
         elif args.command == "status":
-            result = list_sessions(args.session)
+            result = list_sessions(args.session, client, admin)
+        elif args.command == 'resolve':
+            result = resolve_route(args.route, client)
         elif args.command == "attach":
-            result = attach(args.session, args.port, args.busid, args.route, args.auto_reconnect)
+            result = attach(args.session, args.port, args.busid, args.route, args.auto_reconnect,
+                            uta_auth.read_config(sys.stdin.buffer) if args.auth_stdin else None, client)
         else:
-            result = detach(args.session)
+            result = detach(args.session, client, admin)
         print(json.dumps(dict(ok=True, result=result), ensure_ascii=False))
     except Exception as exc:
         print(json.dumps(dict(ok=False, error=str(exc)), ensure_ascii=False))

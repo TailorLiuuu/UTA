@@ -17,7 +17,7 @@ using namespace usbipdcpp;
 TransferHandle::TransferHandle(void *handle, TransferOperator *op) : handle_(handle), op_(op) {
 }
 
-TransferHandle::TransferHandle(TransferHandle &&other) noexcept : handle_(other.handle_), op_(other.op_) {
+TransferHandle::TransferHandle(TransferHandle &&other) noexcept : handle_(other.handle_), op_(other.op_), reservation_(std::move(other.reservation_)) {
     other.handle_ = nullptr;
     other.op_ = nullptr;
 }
@@ -27,6 +27,7 @@ TransferHandle &TransferHandle::operator=(TransferHandle &&other) noexcept {
         reset();
         handle_ = other.handle_;
         op_ = other.op_;
+        reservation_ = std::move(other.reservation_);
         other.handle_ = nullptr;
         other.op_ = nullptr;
     }
@@ -43,9 +44,11 @@ void TransferHandle::reset() {
     }
     handle_ = nullptr;
     op_ = nullptr;
+    reservation_.reset();
 }
 
 void *TransferHandle::release() {
+    if (reservation_) throw std::logic_error("Cannot release a budgeted USB transfer");
     void *tmp = handle_;
     handle_ = nullptr;
     op_ = nullptr;
@@ -436,7 +439,7 @@ void UsbIpCommand::UsbIpCmdSubmit::to_socket(asio::ip::tcp::socket &sock, error_
     }
 }
 
-void UsbIpCommand::UsbIpCmdSubmit::from_socket(asio::ip::tcp::socket &sock) {
+void UsbIpCommand::UsbIpCmdSubmit::from_socket(asio::ip::tcp::socket &sock, std::shared_ptr<ResourceBudget> budget) {
     // 使用 scatter-gather 一次性读取固定部分
     // header 字段(16字节) + transfer参数(20字节) + setup(8字节) = 44字节
     decltype(SetupPacket{}.to_bytes()) setup_buffer;
@@ -446,16 +449,14 @@ void UsbIpCommand::UsbIpCmdSubmit::from_socket(asio::ip::tcp::socket &sock) {
     // 设置命令类型
     header.command = USBIP_CMD_SUBMIT;
 
-    // 校验端点号：header.ep 是 32 位，转 uint8_t 会截断，恶意客户端可发
-    // 溢出值（如 0x100）截断后映射到错误端点。协议中 ep 是端点号且不带
-    // 方向位（方向由 direction 字段给出，见 protocol.h 中 UsbIpHeaderBasic::ep
-    // 的注释），合法范围 0-0x7F，超范围按协议错误拒绝
-    if (header.ep > 0x7F) [[unlikely]] {
-        throw std::system_error(std::make_error_code(std::errc::protocol_error), "invalid endpoint number");
-    }
-
-    // 解析 setup packet（小端序）
+    // Validate wire fields before routing or allocating a transfer. Direction
+    // disagreement on control OUT could otherwise send uninitialized IN memory.
+    if (header.ep > 15 || (header.direction != UsbIpDirection::In && header.direction != UsbIpDirection::Out))
+        throw std::system_error(std::make_error_code(std::errc::protocol_error), "invalid USB endpoint/direction");
     setup = SetupPacket::parse(setup_buffer);
+    if (header.ep == 0 && (setup.length > transfer_buffer_length ||
+            (setup.length && setup.is_out() != (header.direction == UsbIpDirection::Out))))
+        throw std::system_error(std::make_error_code(std::errc::protocol_error), "invalid control transfer direction/length");
 
     // 检查缓冲区大小，防止恶意大内存分配
     if (transfer_buffer_length > USBIPDCPP_MAX_TRANSFER_BUFFER_SIZE) [[unlikely]] {
@@ -473,13 +474,11 @@ void UsbIpCommand::UsbIpCmdSubmit::from_socket(asio::ip::tcp::socket &sock) {
     int num_iso = (number_of_packets != 0 && number_of_packets != 0xFFFFFFFF) ? static_cast<int>(number_of_packets) : 0;
     auto *routing_op = transfer.get_operator();
     std::uint8_t real_ep = static_cast<std::uint8_t>(header.ep);
-    // direction 不显式校验（非 0/1 值按 Out 处理）：与内核 usbip 模块和
-    // usbipd-libusb 一致（都只判断 == USBIP_DIR_IN），非法值还原出的
-    // 端点地址不会命中任何真实端点，后续 find_ep 失败自然拒绝，无内存
-    // 安全影响
     if (header.direction == UsbIpDirection::In)
         real_ep |= 0x80;
     auto *leaf_op = routing_op->get_operator_for_ep(real_ep);
+    if (budget) transfer.reserve(std::move(budget),
+        static_cast<std::size_t>(transfer_buffer_length) + static_cast<std::size_t>(num_iso) * 32 + 512);
     auto *raw_handle = leaf_op->alloc_transfer_handle(transfer_buffer_length, num_iso, header, setup);
     if (!raw_handle) [[unlikely]] {
         // 分配失败（内存耗尽等），抛 std::system_error 由 get_cmd_from_socket 捕获后
@@ -560,7 +559,8 @@ usbipdcpp::UsbIpCommand::OpCmdVariant usbipdcpp::UsbIpCommand::get_op_from_socke
 
 usbipdcpp::UsbIpCommand::CmdVariant usbipdcpp::UsbIpCommand::get_cmd_from_socket(asio::ip::tcp::socket &sock,
                                                                                  AbstDeviceHandler *handler,
-                                                                                 usbipdcpp::error_code &ec) {
+                                                                                 usbipdcpp::error_code &ec,
+                                                                                 std::shared_ptr<ResourceBudget> budget) {
 
     try {
         auto command = read_u32(sock);
@@ -571,7 +571,7 @@ usbipdcpp::UsbIpCommand::CmdVariant usbipdcpp::UsbIpCommand::get_cmd_from_socket
                 auto cmd = UsbIpCmdSubmit{};
                 // 提前设置operator防止空指针
                 cmd.transfer.set_operator(handler->get_transfer_operator());
-                cmd.from_socket(sock);
+                cmd.from_socket(sock, budget);
                 return cmd;
                 break;
             }
@@ -597,6 +597,8 @@ usbipdcpp::UsbIpCommand::CmdVariant usbipdcpp::UsbIpCommand::get_cmd_from_socket
         else {
             ec = make_error_code(ErrorType::SOCKET_ERR);
         }
+    } catch (const std::bad_alloc &) {
+        ec = make_error_code(ErrorType::INTERNAL_ERROR);
     }
     return UsbIpCommand::CmdVariant{};
 }

@@ -11,13 +11,13 @@ using namespace usbipdcpp;
 
 void *GenericTransferOperator::alloc_transfer_handle(std::size_t buffer_length, int num_iso_packets,
                                                      const UsbIpHeaderBasic &header, const SetupPacket &setup_packet) {
-    auto *trx = new GenericTransfer{};
+    auto trx = std::make_unique<GenericTransfer>();
     trx->data.resize(buffer_length);
     trx->iso_descriptors.resize(num_iso_packets);
     // 方向由 CMD_SUBMIT 的 direction 决定，供 transfer_is_in 查询
     // （OUT 应答无数据回发，协议层按此计算发送 length）
     trx->is_in = (header.direction == UsbIpDirection::In);
-    return trx;
+    return trx.release();
 }
 
 void GenericTransferOperator::free_transfer_handle(void *handle) {

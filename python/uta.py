@@ -24,6 +24,8 @@ import uuid
 from uta_diagnostics import inspect_devices, connection_error
 import uta_privileged
 import uta_optimization
+import uta_auth
+import uta_client
 
 VERSION = "0.1.0"
 HERE = Path(__file__).resolve().parent
@@ -205,15 +207,21 @@ def discover_ssh_hosts(config=None):
     return dict(hosts=list(hosts.values()), warnings=warnings)
 
 
-def remote_command(server, argv, privileged=False, timeout=20):
+def remote_command(server, argv, privileged=False, timeout=20, input=None):
     cmd = shlex.join(argv)
     if privileged:
         cmd = f'if [ "$(id -u)" = 0 ]; then exec {cmd}; else exec sudo -n {cmd}; fi'
-    return run(ssh_args(server) + [server["target"], cmd], timeout=timeout)
+    return run(ssh_args(server) + [server["target"], cmd], timeout=timeout, input=input)
 
 
-def remote_json(server, argv, privileged=True):
-    text = remote_command(server, [REMOTE] + argv, privileged)
+def remote_json(server, argv, privileged=True, input=None):
+    if argv and argv[0] in ('attach', 'list', 'status', 'detach', 'resolve'):
+        if any(a in ('--admin', '--client-file', '--client-stdin') or a.startswith('--client-file=') for a in argv[1:]):
+            raise ValueError('App-managed operations must use this client identity')
+        credential = uta_client.credential(HOME, server['id'])
+        argv = [*argv, '--client-stdin']
+        input = uta_client.encode(credential).decode() + (input or '')
+    text = remote_command(server, [REMOTE] + argv, privileged, input=input)
     try:
         data = json.loads(text)
     except ValueError as exc:
@@ -721,16 +729,24 @@ class Controller:
                 raise RuntimeError("云端尚未就绪，请先安装代理并加载 vhci_hcd")
             if inspect_devices([device]).get(busid, {}).get("state") == "process_busy":
                 raise RuntimeError("串口正被其他程序打开。请查看设备占用信息并关闭对应连接后重试；UTA 不会强制终止该程序。")
+            if check.get("session_auth") != uta_auth.PROTOCOL:
+                raise RuntimeError("云端代理不支持会话认证，请先更新云端代理再接入")
+            if check.get('client_identity') != uta_client.PROTOCOL:
+                raise RuntimeError('云端代理不支持客户端隔离，请先更新云端代理再接入')
+            auth = uta_auth.create(session, busid, check["uid"])
             native_log = HOME / "logs" / f"{session}-usb.log"
             ssh_log = HOME / "logs" / f"{session}-ssh.log"
             self.update(busid, log=str(native_log), ssh_log=str(ssh_log),
                         message="正在准备所选 USB 设备…")
             with native_log.open("w") as errors:
-                exporter_args = ([sys.executable, str(HERE / "uta_privileged.py"), busid,
-                                  device["vidpid"], device.get("serial", "")] if privileged else
-                                 [str(NATIVE), "export", busid])
-                exporter = subprocess.Popen(exporter_args,
+                exporter_args = [sys.executable, str(HERE / "uta_privileged.py"), busid,
+                                 device["vidpid"], device.get("serial", ""),
+                                 "authorized" if privileged else "standard"]
+                exporter = subprocess.Popen(exporter_args, stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE, stderr=errors, text=True)
+                exporter.stdin.write(uta_auth.encode(auth).decode())
+                exporter.stdin.close()
+                exporter.stdin = None
             with self.lock:
                 self.processes[busid] = [exporter]
             import selectors
@@ -742,7 +758,7 @@ class Controller:
             if not line:
                 raise RuntimeError("USB 导出失败：" + native_log.read_text()[-1800:])
             endpoint = json.loads(line)
-            local_destination = endpoint["socket"] if privileged else f'127.0.0.1:{endpoint["port"]}'
+            local_destination = endpoint["socket"]
             self.update(busid, message="正在建立加密 SSH 隧道…")
             args = ssh_args(server) + ["-o", "ExitOnForwardFailure=yes",
                 "-R", f"127.0.0.1:0:{local_destination}",
@@ -766,12 +782,12 @@ class Controller:
             if not remote_port:
                 raise RuntimeError("SSH 未确认反向端口；请检查 AllowTcpForwarding、GatewayPorts 和 SSH 日志")
             self.update(busid, state="enumerating", message="隧道已连接，正在云端挂载 USB…")
-            attach_args = ["attach", "--session", session, "--port", str(remote_port), "--busid", busid]
+            attach_args = ["attach", "--session", session, "--port", str(remote_port), "--busid", busid, "--auth-stdin"]
             if check.get("route_identity"):
                 attach_args += ["--route", self.sessions[busid]["route_id"]]
                 if enabled:
                     attach_args += ["--auto-reconnect"]
-            info = remote_json(server, attach_args)
+            info = remote_json(server, attach_args, input=uta_auth.encode(auth).decode())
             if info.get("state") not in ("enumerating", "attached"):
                 raise RuntimeError("云端 USB 接入未保持连接，尚未生成设备端口；请查看 USB 日志后重试")
             self.update(busid, state=info["state"], remote_port=remote_port,
@@ -1224,6 +1240,10 @@ def main():
     sub.add_parser("stop", help="stop background controller and close tunnels")
     raw = sub.add_parser("rpc", help="JSON control API used by the desktop UI")
     raw.add_argument("json")
+    identity = sub.add_parser('client', help='Show identity or export a private credential for a remote development session')
+    identity.add_argument('operation', choices=('show', 'export'))
+    identity.add_argument('--server', required=True, help='Saved server ID')
+    identity.add_argument('--output', help='New private file for export; never overwritten')
     server = sub.add_parser("server").add_subparsers(dest="server_command", required=True)
     server.add_parser("list")
     server.add_parser("discover", help="list literal aliases from ~/.ssh/config and Includes")
@@ -1251,6 +1271,20 @@ def main():
     dis.add_argument("--device", required=True)
     args = parser.parse_args()
     try:
+        if args.command == 'client':
+            servers = json.loads((HOME / 'config.json').read_text()).get('servers', [])
+            if not any(s.get('id') == args.server for s in servers):
+                raise ValueError('Unknown saved server ID')
+            if (args.operation == 'export') != bool(args.output):
+                raise ValueError('Use --output only with client export')
+            credential = uta_client.credential(HOME, args.server)
+            result = dict(client_id=credential['client_id'], server_id=args.server)
+            if args.output:
+                path = Path(args.output).expanduser().absolute()
+                uta_client.export_file(path, credential)
+                result['credential_file'] = str(path)
+            print(json.dumps(dict(ok=True, result=result), ensure_ascii=False, indent=2))
+            return 0
         if args.command == "daemon":
             daemon()
             return 0

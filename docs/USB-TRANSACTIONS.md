@@ -13,7 +13,7 @@ sudo install -m 755 uta-usb-io /usr/local/lib/uta/uta-usb-io
 sudo install -m 644 uta-usb-transport.mjs /usr/local/lib/uta/uta-usb-transport.mjs
 ```
 
-先用 `uta-server list` 按 UTA 会话与设备身份找到当前节点；不能固定节点编号，
+先按 [客户端上下文指南](CLIENT-IDENTITY.md) 选择自己的凭据，再用 `uta-server list` 按 UTA 会话与设备身份找到当前节点；不能固定节点编号，
 也不能在多个候选中默认选择第一个。打开时再次检查 bus/address、VID、PID。
 接口被占用时返回错误，不强制卸载 Linux 驱动。
 

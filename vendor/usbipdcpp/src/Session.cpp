@@ -25,13 +25,31 @@ usbipdcpp::Session::Session(Server &server, std::uint64_t id) :
 }
 
 void usbipdcpp::Session::enqueue_ret_submit(UsbIpResponse::UsbIpRetSubmit &&submit) {
-    std::lock_guard lock(swap_mutex);
-    write_buffer.emplace_back(std::move(submit));
+    bool overflow = false;
+    {
+        std::lock_guard lock(swap_mutex);
+        if (should_immediately_stop) return;
+        overflow = queued_responses.load() >= max_queued_responses;
+        if (!overflow) {
+            try { write_buffer.emplace_back(std::move(submit)); ++queued_responses; }
+            catch (const std::bad_alloc &) { overflow = true; }
+        }
+    }
+    if (overflow) immediately_stop();
 }
 
 void usbipdcpp::Session::enqueue_ret_unlink(UsbIpResponse::UsbIpRetUnlink &&unlink) {
-    std::lock_guard lock(swap_mutex);
-    write_buffer.emplace_back(std::move(unlink));
+    bool overflow = false;
+    {
+        std::lock_guard lock(swap_mutex);
+        if (should_immediately_stop) return;
+        overflow = queued_responses.load() >= max_queued_responses;
+        if (!overflow) {
+            try { write_buffer.emplace_back(std::move(unlink)); ++queued_responses; }
+            catch (const std::bad_alloc &) { overflow = true; }
+        }
+    }
+    if (overflow) immediately_stop();
 }
 
 void usbipdcpp::Session::wakeup_sender() {
@@ -506,7 +524,7 @@ void usbipdcpp::Session::receiver(usbipdcpp::error_code &receiver_ec) {
     while (!should_immediately_stop) {
         usbipdcpp::error_code ec;
 
-        auto command = UsbIpCommand::get_cmd_from_socket(socket, current_handler.get(), ec);
+        auto command = UsbIpCommand::get_cmd_from_socket(socket, current_handler.get(), ec, resource_budget);
         if (ec) [[unlikely]] {
             if (ec.value() == static_cast<int>(ErrorType::SOCKET_EOF)) {
                 SPDLOG_DEBUG("连接关闭");
@@ -658,6 +676,10 @@ void usbipdcpp::Session::sender(usbipdcpp::error_code &ec) {
             continue;
         }
         auto send_data = std::move(send_data_opt.value());
+        struct ResponseCount {
+            std::atomic_size_t &count;
+            ~ResponseCount() { --count; }
+        } counted{queued_responses};
 
         SPDLOG_TRACE("channel收到消息");
         error_code sending_ec;

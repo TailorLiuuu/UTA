@@ -127,7 +127,7 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 <key>CFBundleIconFile</key><string>UTA.icns</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>0.1.0</string>
-<key>CFBundleVersion</key><string>25</string>
+<key>CFBundleVersion</key><string>26</string>
 <key>CFBundleDevelopmentRegion</key><string>zh-Hans</string>
 <key>CFBundleLocalizations</key><array><string>zh-Hans</string><string>en</string></array>
 <key>SUFeedURL</key><string>https://raw.githubusercontent.com/TailorLiuuu/UTA/main/updates/appcast.xml</string>
@@ -160,7 +160,7 @@ chmod +x dist/uta-usb-io
 cp dist/uta-usb-io "$stage/uta-usb-io"
 cp linux/uta-usb-transport.mjs dist/uta-usb-transport.mjs
 cp dist/uta-usb-transport.mjs "$stage/uta-usb-transport.mjs"
-cp docs/TESTING.md "$stage/TESTING.md"
+cp docs/TESTING.md docs/CLIENT-IDENTITY.md docs/SECURITY.md "$stage/"
 cp docs/INSTALL-macOS.md "$stage/INSTALL-macOS.txt"
 cat > "$stage/uta" <<'SH'
 #!/bin/sh

@@ -101,16 +101,15 @@ int main(int argc, char **argv) {
             }
             std::cout << "]\n";
             libusb_free_device_list(devices, 1);
-        } else if ((argc == 3 && std::string(argv[1]) == "export") ||
-                   (argc == 5 && std::string(argv[1]) == "export-stream")) {
-            const bool stream = std::string(argv[1]) == "export-stream";
+        } else if (argc == 5 && std::string(argv[1]) == "export-stream") {
+            // Only the authenticated relay supplies a connected descriptor.
             if (!std::regex_match(argv[2], std::regex("[0-9]+-[0-9.]+")))
                 throw std::runtime_error("Invalid busid");
             // Each process exports exactly one explicitly selected device. Never bind all.
             usbipdcpp::LibusbServer server({.skip_hub = true, .auto_bind_hotplug = false});
             auto *device = usbipdcpp::LibusbServer::find_by_busid(argv[2]);
             if (!device) throw std::runtime_error("USB device is no longer present");
-            if (stream) {
+            {
                 libusb_device_descriptor desc{};
                 libusb_get_device_descriptor(device, &desc);
                 std::ostringstream identity;
@@ -133,19 +132,16 @@ int main(int argc, char **argv) {
             auto bound = server.bind_host_device(device); // takes ownership of reference
             if (bound != usbipdcpp::DeviceOperationResult::Success)
                 throw std::runtime_error("Cannot export USB device, result=" + std::to_string(int(bound)));
-            auto ec = stream ? server.start_stream(STDIN_FILENO)
-                             : server.start({asio::ip::make_address("127.0.0.1"), 0});
+            auto ec = server.start_stream(STDIN_FILENO);
             if (ec) throw std::runtime_error(ec.message());
             std::signal(SIGINT, stop_signal);
             std::signal(SIGTERM, stop_signal);
-            if (!stream) std::cout << "{\"port\":" << server.get_server().endpoint().port()
-                      << ",\"busid\":" << json_quote(argv[2]) << "}" << std::endl;
             const pid_t parent = getppid();
-            while (!stopped && getppid() == parent && (!stream || server.get_server().get_session_count() > 0))
+            while (!stopped && getppid() == parent && server.get_server().get_session_count() > 0)
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
             server.stop();
         } else {
-            std::cerr << "Usage: uta-native list | export BUSID\n";
+            std::cerr << "Usage: uta-native list | export-stream BUSID VID:PID SERIAL\n";
             result = 2;
         }
     } catch (const std::exception &e) {

@@ -12,6 +12,7 @@
 #include <asio.hpp>
 
 #include "usbipdcpp/Device.h"
+#include "usbipdcpp/ResourceBudget.h"
 #include "usbipdcpp/network.h"
 
 // 最大传输缓冲区大小（用于防止恶意大内存分配）
@@ -205,9 +206,13 @@ static_assert(FromHandleTransfer<GenericTransfer, GenericTransfer>);
 class USBIPDCPP_API TransferHandle {
     void *handle_ = nullptr;
     TransferOperator *op_ = nullptr;
+    std::shared_ptr<TransferReservation> reservation_;
 
 public:
     TransferHandle() = default;
+    void reserve(std::shared_ptr<ResourceBudget> budget, std::size_t bytes) {
+        reservation_ = TransferReservation::acquire(std::move(budget), bytes);
+    }
 
     /**
      * @brief 构造并接管所有权
@@ -351,7 +356,7 @@ namespace UsbIpCommand {
         void to_socket(asio::ip::tcp::socket &sock, error_code &ec) const;
         // 这个函数只读取部分数值，后面的数据部分不读取，一个对象只能调用一次。
         // 调用这个函数之前保证transfer已经设置了TransferOperator，不然会空指针
-        void from_socket(asio::ip::tcp::socket &sock);
+        void from_socket(asio::ip::tcp::socket &sock, std::shared_ptr<ResourceBudget> budget = {});
     };
 
     static_assert(SerializableFromSocket<UsbIpCmdSubmit>);
@@ -393,7 +398,8 @@ namespace UsbIpCommand {
      * @return 获取到的命令
      */
     USBIPDCPP_API usbipdcpp::UsbIpCommand::CmdVariant
-    get_cmd_from_socket(asio::ip::tcp::socket &sock, AbstDeviceHandler *handler, usbipdcpp::error_code &ec);
+    get_cmd_from_socket(asio::ip::tcp::socket &sock, AbstDeviceHandler *handler, usbipdcpp::error_code &ec,
+                        std::shared_ptr<ResourceBudget> budget = {});
 } // namespace UsbIpCommand
 
 namespace UsbIpResponse {

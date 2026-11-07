@@ -48,9 +48,9 @@ Mac 本地：
     /Applications/UTA.app/Contents/Resources/uta --help
     /Applications/UTA.app/Contents/Resources/uta status
 
-Linux 服务器：
+Linux 服务器（先按 [客户端上下文指南](CLIENT-IDENTITY.md) 配置自己的凭据）：
 
-    sudo -n uta-server list
+    sudo -n uta-server list --client-file /path/to/my-client.json
 
 显示的 `/dev/tty*` 和 `/dev/bus/usb/*` 属于服务器。多个设备存在时，先核对身份再选择。
 

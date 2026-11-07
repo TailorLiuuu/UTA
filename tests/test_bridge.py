@@ -1,3 +1,4 @@
+import contextlib
 import importlib.util
 import json
 import os
@@ -380,15 +381,19 @@ class ServerTests(unittest.TestCase):
             vhci = root / "vhci"
             vhci.mkdir()
             (vhci / "attach").touch()
+            (root / "state").mkdir(mode=0o700)
             listener = socket.socket()
             listener.bind(("127.0.0.1", 0))
             listener.listen()
             tcp_port = listener.getsockname()[1]
             errors = []
+            auth = server.uta_auth.create("a" * 32, "2-1.4", 1001)
+            listener.settimeout(5)
             def exporter():
                 try:
                     conn, _ = listener.accept()
                     with conn:
+                        conn.sendall(server.uta_auth.server(conn, auth))
                         request = server.receive(conn, 40)
                         self.assertEqual(struct.unpack("!HHI32s", request)[3].rstrip(b"\0"), b"2-1.4")
                         reply = struct.pack("!256s32sIIIHHHBBBBBB", b"/device", b"2-1.4",
@@ -405,16 +410,18 @@ class ServerTests(unittest.TestCase):
             free = dict(hub="hs", port=0, status=4, devid=0, socket="0", local_busid="0-0")
             used = dict(hub="hs", port=0, status=5, devid=0x20003, socket="123", local_busid="0-0")
             with patch.object(server, "VHCI", vhci), patch.object(server, "STATE", root / "state"), \
-                 patch.object(server.os, "geteuid", return_value=0), \
+                 patch.object(server, "locked", contextlib.nullcontext), \
                  patch.object(server, "owner", return_value=1001), \
                  patch.object(server, "socket_is_live", return_value=True), \
                  patch.object(server, "ports", side_effect=[[free], [used], [used]]):
-                result = server.attach("a" * 32, tcp_port, "2-1.4", route="b" * 32, auto_reconnect=True)
+                result = server.attach("a" * 32, tcp_port, "2-1.4", route="b" * 32, auto_reconnect=True, auth=auth, client=dict(secret="c"*64, client_id=server.uta_client.identifier("c"*64)))
             worker.join(timeout=3)
             self.assertFalse(worker.is_alive())
             self.assertEqual(errors, [])
             self.assertEqual(result["state"], "enumerating")
             self.assertEqual(result["owner"], 1001)
+            self.assertEqual(result["client_id"], server.uta_client.identifier("c"*64))
+            self.assertNotIn("c"*64, json.dumps(result))
             self.assertEqual(result["route_id"], "b" * 32)
             self.assertTrue(result["reconnect_enabled"])
             fields = (vhci / "attach").read_text().split()
@@ -486,9 +493,10 @@ class ServerTests(unittest.TestCase):
 
     def test_cross_user_record_rejected(self):
         with tempfile.TemporaryDirectory() as root, patch.object(server, "STATE", Path(root)):
-            (Path(root) / ("a" * 32 + ".json")).write_text('{"owner":1001}')
-            with patch.object(server, "owner", return_value=1002), self.assertRaises(PermissionError):
-                server.read_record("a" * 32)
+            cred = dict(secret="c"*64, client_id=server.uta_client.identifier("c"*64))
+            (Path(root) / ("a" * 32 + ".json")).write_text(json.dumps(dict(owner=1001, client_id=cred['client_id'])))
+            with patch.object(server, "owner", return_value=1002), patch.object(server, "trusted_state_file"), self.assertRaises(PermissionError):
+                server.read_record("a" * 32, cred)
 
 
 class NativeProtocolTests(unittest.TestCase):

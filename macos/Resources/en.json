@@ -146,7 +146,6 @@
   "选择 {0}": "Select {0}",
   "已接入 {0}": "Connected to {0}",
   "从本地 USB，到云端开发环境": "From local USB to your cloud workspace",
-  "1. 在终端通过 SSH 登录服务器，确认指纹并配置密钥。\n\n2. 从 SSH 配置导入服务器，点击「安装云端代理」。Linux 需要 vhci_hcd；安装和挂载需要管理员权限。\n\n3. 选择侧栏服务器，勾选开发板并点击「接入」。只有显示「云端已挂载」后，再开始烧录。\n\n4. 在远程开发会话运行 sudo uta-server list 查询设备，随后使用原来的烧录工具。": "1. Sign in via SSH in Terminal. Verify the server fingerprint and configure key authentication.\n\n2. Import a server from SSH configuration and click Install remote agent. Linux requires vhci_hcd; installation and attachment need administrator privileges.\n\n3. Select a server, select your board, and click Connect. Start flashing only after Mounted remotely appears.\n\n4. Run sudo uta-server list in the remote session to locate the device, then use your existing flashing tool.",
   "打开完整测试指南": "Open full testing guide",
   "打开 CLI 所在目录": "Open CLI folder",
   "完成": "Done",
@@ -325,6 +324,7 @@
   "正在准备依赖、编译并启用服务器优化，可能需要几分钟…": "Preparing dependencies, building and enabling server tuning. This may take a few minutes…",
   "需要服务器管理员授权，请点击「授权并启用」": "Server administrator authorization is required. Click Authorize and enable.",
   "请先断开此服务器上的 USB 并等待清理完成，再启用优化": "Disconnect this server’s USB devices and wait for cleanup before enabling optimization.",
+  "云端代理不支持会话认证，请先更新云端代理再接入": "The cloud agent does not support session authentication. Update it before connecting.",
   "服务器正在配置优化，请完成后再接入设备": "Server optimization is in progress. Wait until it finishes before connecting devices.",
   "授权或服务器操作尚未结束，请先检查终端，再重新检测状态": "Authorization or server setup has not finished. Check Terminal, then check the status again.",
   "服务器优化未完成：": "Server optimization did not complete: ",
@@ -343,5 +343,7 @@
   "云端代理正在更新，请完成后再接入设备": "The cloud agent is updating. Wait for it to finish before connecting a device",
   "云端代理更新尚未核验成功，请重新检查或使用手动安装": "The cloud agent update could not be verified. Check again or use manual installation",
   "当前分配给 {0}；请先断开并等待清理完成，再分配到其他服务器。": "Assigned to {0}. Disconnect and wait for cleanup before assigning it to another server.",
-  "设备已分配给 {0}；请先在原服务器断开并等待清理完成。": "This device is assigned to {0}. Disconnect it from its current server and wait for cleanup first."
+  "设备已分配给 {0}；请先在原服务器断开并等待清理完成。": "This device is assigned to {0}. Disconnect it from its current server and wait for cleanup first.",
+  "云端代理不支持客户端隔离，请先更新云端代理再接入": "The cloud agent does not support client isolation. Update it before connecting.",
+  "1. 在终端通过 SSH 登录服务器，确认指纹并配置密钥。\n\n2. 从 SSH 配置导入服务器，点击「安装云端代理」。Linux 需要 vhci_hcd；安装和挂载需要管理员权限。\n\n3. 选择侧栏服务器，勾选开发板并点击「接入」。只有显示「云端已挂载」后，再开始烧录。\n\n4. 使用 UTA 显示的云端端口运行原来的烧录工具。通过云端 CLI 查询时，请先按完整指南配置本机客户端凭据。": "1. Sign in via SSH in Terminal. Verify the server fingerprint and configure key authentication.\n\n2. Import a server from SSH configuration and click Install remote agent. Linux requires vhci_hcd; installation and attachment need administrator privileges.\n\n3. Select a server, select your board, and click Connect. Start flashing only after Mounted remotely appears.\n\n4. Use the cloud port shown in UTA with your existing flashing tool. To query devices with the cloud CLI, first configure this client's credential as described in the full guide."
 }

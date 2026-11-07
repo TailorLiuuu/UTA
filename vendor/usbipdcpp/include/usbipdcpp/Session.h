@@ -145,6 +145,10 @@ private:
     mutable std::mutex swap_mutex;
     std::condition_variable data_available_cv;
     std::atomic_bool has_data{false};
+    std::shared_ptr<ResourceBudget> resource_budget = std::make_shared<ResourceBudget>();
+    // Covers both queues and the response currently being sent.
+    std::atomic_size_t queued_responses{0};
+    static constexpr std::size_t max_queued_responses = 2048;
 
     void parse_op();
 

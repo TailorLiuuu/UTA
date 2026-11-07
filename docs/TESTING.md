@@ -3,6 +3,10 @@
 这是可运行的原型，不是所有设备兼容性已经验证的产品。
 它导出真实 USB 请求，不是串口转 TCP，也不会下载固件到 Mac。
 
+会话认证加固版需要 Mac App 与云端 CLI 配套更新：云端 `doctor` 应包含
+`session_auth: 1` 和 `client_identity: 1`，不兼容时会拒绝新接入并提示更新。
+客户端凭据可避免共用 root 时通过常规 UTA 操作串线，但不能阻止 root 主动绕过。权限、资源上限及尚未覆盖的边界见 [安全说明](SECURITY.md)。
+
 ## 交付内容与运行要求
 
 - `UTA.app`：Mac 界面，管理服务器和设备路由。
@@ -148,8 +152,11 @@ UTA **不会重放未确认的烧录命令，也不会从中断位置自动续�
 
 ## 第四步：服务器上的远程开发会话
 
+先按 [客户端上下文指南](CLIENT-IDENTITY.md) 导出并配置自己的凭据。App 自动使用本机身份，
+云端终端需要指定凭据文件；不要给共用 root 设置全局默认客户端。
+
 ```bash
-sudo -n /usr/local/bin/uta-server list
+sudo -n /usr/local/bin/uta-server list --client-file /path/to/my-client.json
 ```
 
 JSON 中按 `session`、来源 `busid` 和 `vidpid` 找设备，`nodes` 给出实际路径。
@@ -174,7 +181,7 @@ UTA 服务端只管理 USB 路由，不提供烧录命令。进入下载模式�
 
 建议给远程会话的操作说明：
 
-> 本地开发板通过 UTA 接入。先运行 `sudo -n uta-server list`；
+> 本地开发板通过 UTA 接入。先运行 `sudo -n uta-server list --client-file /path/to/my-client.json`；
 > 根据目标设备身份选择已挂载设备。若有多个候选，不要自动选第一个串口。
 > 编译和固件文件留在服务器，使用本项目的烧录工具和正确参数。
 > 分别报告编译、设备识别、烧录、重启日志和功能测试结果。
@@ -275,10 +282,11 @@ API 路线适用于 macOS 13+；**当前交付包仍仅构建、测试于 Apple 
 ## 数据位置与清理
 
 默认配置、日志：`~/Library/Application Support/UTA/`。
-只保存服务器配置和诊断日志，不保存 SSH 私钥内容或密码。
+保存服务器配置、诊断日志以及独立的客户端身份种子（私有文件 `.client-identity.json`），不保存 SSH 私钥内容或密码。
+身份种子不是日志或缓存，不要删除或复制给其他同事。
 测试可用 `UTA_HOME=/绝对路径` 指定隔离目录。
 测试结束先执行 CLI `stop`，再移除 App。
-云端卸载前先 `sudo uta-server list` 并按 session 执行 `detach --session ID`，
+云端卸载由管理员先 `sudo uta-server list --admin`，确认影响范围后再按 session 执行 `detach --admin --session ID`，
 然后移除 `/usr/local/bin/uta-server` 和你手动创建的 sudoers 条目。
 
 ## 建议验收顺序

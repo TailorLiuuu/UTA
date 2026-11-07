@@ -1276,7 +1276,7 @@ struct ContentView: View {
     var helpView: some View {
         VStack(alignment: .leading, spacing: 20) {
             Text(L("从本地 USB，到云端开发环境")).font(.title2.bold())
-            Text(L("1. 在终端通过 SSH 登录服务器，确认指纹并配置密钥。\n\n2. 从 SSH 配置导入服务器，点击「安装云端代理」。Linux 需要 vhci_hcd；安装和挂载需要管理员权限。\n\n3. 选择侧栏服务器，勾选开发板并点击「接入」。只有显示「云端已挂载」后，再开始烧录。\n\n4. 在远程开发会话运行 sudo uta-server list 查询设备，随后使用原来的烧录工具。"))
+            Text(L("1. 在终端通过 SSH 登录服务器，确认指纹并配置密钥。\n\n2. 从 SSH 配置导入服务器，点击「安装云端代理」。Linux 需要 vhci_hcd；安装和挂载需要管理员权限。\n\n3. 选择侧栏服务器，勾选开发板并点击「接入」。只有显示「云端已挂载」后，再开始烧录。\n\n4. 使用 UTA 显示的云端端口运行原来的烧录工具。通过云端 CLI 查询时，请先按完整指南配置本机客户端凭据。"))
                 .font(.system(size: 13)).lineSpacing(4)
             Text(L("设备复位或切换模式后，UTA 会释放旧端口，并等待 2 分钟自动接回原服务器。按原 USB 插口、序列号及你允许的 VID:PID 匹配；首次出现新标识时会请求确认。手动断开可取消重连。UTA 不执行或重发设备协议命令，一个设备同时只交给一台服务器使用。"))
                 .font(.system(size: 12)).foregroundStyle(muted)
