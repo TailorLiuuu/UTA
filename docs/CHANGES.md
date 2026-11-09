@@ -1,5 +1,21 @@
 # Changes
 
+## Build 27 — v0.1.0-preview.15 · 2026-11-09
+
+- Opt new App connections into a 60-second cloud session lease. An independent
+  watchdog releases the matching owned socket/port when client status heartbeats
+  stop; other clients and reused ports are left alone. Older attachments opt out.
+- The watchdog does not proxy USB data or add per-transfer processing. Existing
+  flashing protocols remain external to UTA.
+- Validation: 177 Python tests passed; a detached Linux watchdog using fake sysfs
+  expired after 60.11 seconds without affecting a second session.
+- An ML307 hardware run through UTA completed backup, AP writes, bootloader
+  restoration and full readback in 171.76 seconds, then reconnected in runtime
+  mode. The roughly 11x CP read improvement came from larger protocol blocks and
+  bounded USB queues in the external project flasher, not an App-wide speed switch.
+  Phone/audio functions and physical unplug during writes were not tested.
+
+
 ## Build 25 — v0.1.0-preview.13 · 2026-11-06
 
 - CH340/CH341 发送缓冲和 FIFO 扩为至少 8192 字节，保留 4096 字节接收缓冲，并避免 TTY 层 2 KiB 拆包；Linux 5.4/5.15 共用此传输优化。
