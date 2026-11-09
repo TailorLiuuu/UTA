@@ -783,6 +783,8 @@ class Controller:
                 raise RuntimeError("SSH 未确认反向端口；请检查 AllowTcpForwarding、GatewayPorts 和 SSH 日志")
             self.update(busid, state="enumerating", message="隧道已连接，正在云端挂载 USB…")
             attach_args = ["attach", "--session", session, "--port", str(remote_port), "--busid", busid, "--auth-stdin"]
+            if check.get('session_lease'):
+                attach_args += ['--lease-seconds', '60']
             if check.get("route_identity"):
                 attach_args += ["--route", self.sessions[busid]["route_id"]]
                 if enabled:

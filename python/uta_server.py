@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import re
+import selectors
 import socket
 import struct
 import stat
@@ -21,7 +22,7 @@ import uta_ch341
 import uta_auth
 import uta_client
 
-VERSION = "0.1.0-preview.14"
+VERSION = "0.1.0-preview.15"
 VHCI = Path("/sys/devices/platform/vhci_hcd.0")
 STATE = Path("/run/uta")
 # Keep existing live session records accessible when upgrading an older agent.
@@ -222,15 +223,87 @@ def record_status(record):
 def doctor():
     return dict(version=VERSION, platform=sys.platform, python=sys.version.split()[0],
                 route_identity=True, session_auth=uta_auth.PROTOCOL, client_identity=uta_client.PROTOCOL,
+                session_lease=True,
                 ch341_tuning=uta_ch341.status(),
                 uid=owner(), root=os.geteuid() == 0, vhci_available=VHCI.exists(),
                 free_ports=sum(p["status"] == 4 for p in ports()),
                 message="ready" if VHCI.exists() else "Run sudo modprobe vhci_hcd; kernel must include CONFIG_USBIP_VHCI_HCD")
 
 
-def attach(session, tcp_port, busid, route=None, auto_reconnect=False, auth=None, client=None):
+def save_record(record):
+    """Caller holds the state lock; never follow an existing temporary file."""
+    path = STATE / (validate_session(record['session']) + '.json')
+    temp = path.with_suffix('.lease.tmp')
+    fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        with os.fdopen(fd, 'w') as handle:
+            json.dump(record, handle)
+        temp.replace(path)
+    finally:
+        temp.unlink(missing_ok=True)
+
+
+def lease_tick(session, client):
+    """Expire only the original owned socket/port. No USB traffic or replay."""
+    with locked():
+        try:
+            record = read_record(session, client)
+        except FileNotFoundError:
+            return False
+        if not record.get('lease_seconds') or record.get('lease_expired'):
+            return False
+        if not matching_port(record):
+            return False
+        if time.monotonic() < record['lease_deadline']:
+            return True
+        (VHCI / 'detach').write_text(str(record['vhci_port']))
+        record['lease_expired'] = True
+        save_record(record)
+        return False
+
+
+def watch_lease(session, client):
+    validate_session(session)
+    client_scope(client)
+    if os.geteuid() != 0:
+        raise PermissionError('Lease watchdog requires the same privilege as attach')
+    print(json.dumps({'ready': session}), flush=True)
+    while lease_tick(session, client):
+        time.sleep(2)
+    return dict(session=session, state='disconnected')
+
+
+def start_lease_watchdog(session, client):
+    # Detached from the SSH connection: it must still run when the Mac loses
+    # power/network. The credential is delivered through a private pipe only.
+    child = subprocess.Popen([sys.executable, str(Path(__file__).resolve()),
+                              'watch-lease', '--session', session, '--client-stdin'],
+                             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                             stderr=subprocess.DEVNULL, start_new_session=True, close_fds=True)
+    try:
+        child.stdin.write(uta_client.encode(client)); child.stdin.close()
+        with selectors.DefaultSelector() as selector:
+            selector.register(child.stdout, selectors.EVENT_READ)
+            if not selector.select(5):
+                raise RuntimeError('Cloud USB lease watchdog did not start')
+        if json.loads(child.stdout.readline(256)).get('ready') != session:
+            raise RuntimeError('Invalid cloud USB lease watchdog response')
+    except Exception:
+        child.terminate()
+        try: child.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            child.kill(); child.wait()
+        raise
+    finally:
+        child.stdout.close()
+    return child
+
+
+def attach(session, tcp_port, busid, route=None, auto_reconnect=False, auth=None, client=None, lease_seconds=0):
     scope = client_scope(client)
     validate_session(session)
+    if lease_seconds not in (0, 60):
+        raise ValueError('Session lease must be disabled or 60 seconds')
     if auth is None:
         raise PermissionError("Session authentication required; update the Mac app")
     uta_auth.validate(auth)
@@ -274,6 +347,8 @@ def attach(session, tcp_port, busid, route=None, auto_reconnect=False, auth=None
                               devid=devid, socket=row["socket"],
                               socket_inode=os.fstat(sock.fileno()).st_ino,
                               local_tcp_port=sock.getsockname()[1], created=time.time())
+                if lease_seconds:
+                    record.update(lease_seconds=lease_seconds, lease_deadline=time.monotonic() + lease_seconds)
                 temp = path.with_suffix(".tmp")
                 fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
                 try:
@@ -282,8 +357,11 @@ def attach(session, tcp_port, busid, route=None, auto_reconnect=False, auth=None
                     temp.replace(path)
                 finally:
                     temp.unlink(missing_ok=True)
+                if lease_seconds:
+                    start_lease_watchdog(session, client)
             except Exception:
                 (VHCI / "detach").write_text(str(free["port"]))
+                path.unlink(missing_ok=True)
                 raise
         return record_status(record)
 
@@ -305,7 +383,15 @@ def list_sessions(session=None, client=None, admin=False):
     client_scope(client, admin)
     with locked():
         if session:
-            return record_status(read_record(session, client, admin))
+            record = read_record(session, client, admin)
+            if record.get('lease_seconds') and not admin:
+                # Only the owning client's explicit status heartbeat renews it.
+                # list/resolve/admin queries cannot keep a lost Mac alive.
+                if record.get('lease_expired') or time.monotonic() >= record['lease_deadline']:
+                    return dict(record, state='disconnected', nodes=[], disconnect_reason='lease_expired')
+                record['lease_deadline'] = time.monotonic() + record['lease_seconds']
+                save_record(record)
+            return record_status(record)
         result = []
         for path in STATE.glob("*.json"):
             try:
@@ -342,11 +428,15 @@ def main():
     add.add_argument("--route")
     add.add_argument("--auth-stdin", action="store_true", help="Read one-use session credential from SSH stdin")
     add.add_argument("--auto-reconnect", action="store_true")
+    add.add_argument('--lease-seconds', type=int, choices=(0, 60), default=0,
+                     help='Opt-in cloud watchdog; owning client must query status at least every 60 seconds')
+    watch = sub.add_parser('watch-lease', help=argparse.SUPPRESS)
+    watch.add_argument('--session', required=True)
     remove = sub.add_parser("detach")
     remove.add_argument("--session", required=True)
     resolve = sub.add_parser('resolve', help='Resolve an owned route to its current device nodes after reconnection')
     resolve.add_argument('--route', required=True)
-    for command in (listing, status, add, remove, resolve):
+    for command in (listing, status, add, remove, resolve, watch):
         group = command.add_mutually_exclusive_group()
         group.add_argument('--client-stdin', action='store_true', help='Read client credential as the first line of stdin')
         group.add_argument('--client-file', help='Private credential file; otherwise use UTA_CLIENT_CREDENTIAL_FILE')
@@ -358,7 +448,7 @@ def main():
             raise RuntimeError("This CLI must run on Linux, not on the Mac")
         client = None
         admin = getattr(args, 'admin', False)
-        if args.command in ('list', 'status', 'attach', 'detach', 'resolve'):
+        if args.command in ('list', 'status', 'attach', 'detach', 'resolve', 'watch-lease'):
             if admin:
                 client_scope(admin=True)
             elif args.client_stdin:
@@ -380,7 +470,11 @@ def main():
             result = resolve_route(args.route, client)
         elif args.command == "attach":
             result = attach(args.session, args.port, args.busid, args.route, args.auto_reconnect,
-                            uta_auth.read_config(sys.stdin.buffer) if args.auth_stdin else None, client)
+                            uta_auth.read_config(sys.stdin.buffer) if args.auth_stdin else None, client,
+                            lease_seconds=args.lease_seconds)
+        elif args.command == 'watch-lease':
+            watch_lease(args.session, client)
+            return 0
         else:
             result = detach(args.session, client, admin)
         print(json.dumps(dict(ok=True, result=result), ensure_ascii=False))
