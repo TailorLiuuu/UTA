@@ -1,5 +1,23 @@
 # Changes
 
+## Build 28 — v0.1.0-preview.16 · 2026-11-10
+
+- Build bundled libusb 1.0.30 from hash-pinned source with a Darwin-only patch
+  supporting interface numbers 0–255. A 256-bit bitmap replaces 32-bit shifts;
+  endpoint lookup, configuration changes and capture/reset restoration retain
+  high-numbered interfaces. Both the App and privileged helper use this library.
+- Forward import-stage/interface/error diagnostics through each authorized
+  session’s own log pipe. Failed claims no longer rely only on a generic
+  permission/ownership message. Concurrent exports do not share log sinks.
+- Drain final helper diagnostics briefly at stream EOF, outside the data path.
+- Validation: 179 Python tests, 3 Node adapter tests, sanitizer-backed interface
+  bitmap/core bounds tests and concurrent native diagnostic tests passed.
+  EC600M descriptors showed interfaces 0,1,2,3,4,32; live import remains unverified
+  because an existing USB session was explicitly preserved. No new flashing or
+  throughput result is claimed.
+- Updating requires all local USB sessions to finish, then an App update and
+  USB helper disable/re-enable. Cloud CLI is unchanged at Preview 15.
+
 ## Build 27 — v0.1.0-preview.15 · 2026-11-09
 
 - Opt new App connections into a 60-second cloud session lease. An independent

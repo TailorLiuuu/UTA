@@ -797,6 +797,16 @@ void LIBUSB_CALL usbipdcpp::LibusbDeviceHandler::transfer_callback(libusb_transf
     handler->decrement_pending_and_notify();
 }
 
+void usbipdcpp::LibusbDeviceHandler::report_import_error(const char *stage, int interface_number, int error) {
+    if (import_diagnostic_) {
+        const auto message = std::string("USB import: stage=") + stage +
+            " interface=" + std::to_string(interface_number) + " error=" +
+            libusb_error_name(error) + " (" + libusb_strerror(error) + ")";
+        // Diagnostics must never prevent cleanup on an import failure.
+        try { import_diagnostic_(message); } catch (...) {}
+    }
+}
+
 bool usbipdcpp::LibusbDeviceHandler::open_and_claim_device() {
     // 此函数仅用于普通模式
     if (!native_device_) {
@@ -807,6 +817,7 @@ bool usbipdcpp::LibusbDeviceHandler::open_and_claim_device() {
     int err = libusb_open(native_device_, &native_handle);
     if (err) {
         SPDLOG_ERROR("无法打开设备: {}", libusb_strerror(err));
+        report_import_error("open", -1, err);
         return false;
     }
 
@@ -815,6 +826,7 @@ bool usbipdcpp::LibusbDeviceHandler::open_and_claim_device() {
     err = libusb_get_active_config_descriptor(native_device_, &active_config_desc);
     if (err) {
         SPDLOG_ERROR("无法获取配置描述符: {}", libusb_strerror(err));
+        report_import_error("configuration", -1, err);
         libusb_close(native_handle);
         native_handle = nullptr;
         return false;
@@ -835,11 +847,13 @@ bool usbipdcpp::LibusbDeviceHandler::open_and_claim_device() {
         err = libusb_detach_kernel_driver(native_handle, interface_number);
         if (err && err != LIBUSB_ERROR_NOT_FOUND) {
             SPDLOG_WARN("无法卸载接口 {} 的内核驱动: {}", interface_number, libusb_strerror(err));
+            report_import_error("detach", interface_number, err);
         }
 
         err = libusb_claim_interface(native_handle, interface_number);
         if (err) {
             SPDLOG_ERROR("无法声明接口 {}: {}", interface_number, libusb_strerror(err));
+            report_import_error("claim", interface_number, err);
             // 接口 i 在前面已执行 detach，必须先把它的内核驱动挂回去，
             // 否则该接口的内核驱动永久失联（attach 失败无害，忽略返回值）
             libusb_attach_kernel_driver(native_handle, interface_number);

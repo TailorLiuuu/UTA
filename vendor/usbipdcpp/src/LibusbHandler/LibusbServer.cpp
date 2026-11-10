@@ -290,6 +290,7 @@ DeviceOperationResult LibusbServer::bind_host_device(libusb_device *dev) {
 
         // 普通模式：传入设备引用（handler 持有引用所有权）
         current_device->with_handler<LibusbDeviceHandler>(dev);
+        std::static_pointer_cast<LibusbDeviceHandler>(current_device->handler)->import_diagnostic_ = config.import_diagnostic;
         server.get_available_devices().emplace_back(std::move(current_device));
     }
 
@@ -413,6 +414,7 @@ DeviceOperationResult LibusbServer::bind_host_device_with_wrapped_fd(intptr_t fd
 
         // Android 模式：传入 fd（每次连接时重新 wrap）
         current_device->with_handler<LibusbDeviceHandler>(fd);
+        std::static_pointer_cast<LibusbDeviceHandler>(current_device->handler)->import_diagnostic_ = config.import_diagnostic;
         server.get_available_devices().emplace_back(std::move(current_device));
     }
 

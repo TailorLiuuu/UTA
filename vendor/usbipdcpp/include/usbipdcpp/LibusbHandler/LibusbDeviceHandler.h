@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <functional>
 #include <shared_mutex>
 #include <unordered_map>
 
@@ -160,6 +161,8 @@ public:
     intptr_t wrapped_fd_ = -1;
 
     bool interfaces_claimed_ = false; // 接口是否已声明
+    std::function<void(const std::string &)> import_diagnostic_;
+    void report_import_error(const char *stage, int interface_number, int error);
 
     /**
      * @brief Open device and claim interfaces (普通模式).

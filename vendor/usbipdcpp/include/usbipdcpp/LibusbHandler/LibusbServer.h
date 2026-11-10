@@ -29,6 +29,9 @@ enum class DeviceOperationResult {
 struct LibusbServerConfig {
     bool skip_hub = true; ///< 跳过 hub 设备（bDeviceClass == 0x09）
     bool auto_bind_hotplug = false; ///< 热插拔时自动绑定新设备
+    // Per-export diagnostics. Never changes the process-wide logger: the
+    // privileged helper can export several users' devices concurrently.
+    std::function<void(const std::string &)> import_diagnostic;
 };
 
 /**

@@ -85,3 +85,17 @@ class DiagnosticsTests(unittest.TestCase):
         self.assertIn("正在被占用", diag.connection_error(rejected, "Resource busy"))
         self.assertEqual(diag.connection_error("SSH timeout", "Access denied"), "SSH timeout")
         self.assertEqual(diag.connection_error(rejected, ""), rejected)
+
+    def test_terminal_interface_error_wins_over_detach_warning(self):
+        rejected = "USB/IP request rejected (status=1)"
+        log = "USB import: stage=detach interface=0 error=LIBUSB_ERROR_ACCESS (Access denied)\n"
+        log += "USB import: stage=claim interface=32 error=LIBUSB_ERROR_INVALID_PARAM (Invalid parameter)\n"
+        message = diag.connection_error(rejected, log)
+        self.assertIn("接口 32", message)
+        self.assertIn("LIBUSB_ERROR_INVALID_PARAM", message)
+        self.assertNotIn("权限不足", message)
+        self.assertEqual(diag.connection_error("SSH timeout", log), "SSH timeout")
+
+    def test_authorized_access_failure_does_not_repeat_authorization_prompt(self):
+        message = diag.connection_error("USB/IP request rejected", "USB import: stage=claim interface=0 error=LIBUSB_ERROR_ACCESS (Access denied)\n")
+        self.assertIn("无需反复授权", message)

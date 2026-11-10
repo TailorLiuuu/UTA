@@ -6,14 +6,14 @@ UTA 将 Mac 上选定的真实 USB 设备，通过 SSH 接入远程 Linux 服务
 服务器上的工具直接使用虚拟 USB 和对应串口，固件与编译环境留在服务器，
 无需来回下载文件到本机烧录。
 
-**当前状态：0.1 实验原型，build 27（Preview 15）。** 已完成部分开发板实机验证，尚未完成通用 USB
+**当前状态：0.1 实验原型，build 28（Preview 16）。** 已完成部分开发板实机验证，尚未完成通用 USB
 兼容性验收。当前支持 **macOS Apple Silicon → Linux**，没有 Windows 或 iOS 客户端。
 提供预编译安装包与源码。预览版已签名，但尚未经过 Apple 公证。
 
 ## 下载 Mac 预览版
 
-**[下载 DMG 安装包](https://github.com/TailorLiuuu/UTA/releases/download/v0.1.0-preview.15/UTA-0.1.0-macOS-arm64.dmg)** ·
-[Release 与 ZIP 备用包](https://github.com/TailorLiuuu/UTA/releases/tag/v0.1.0-preview.15) ·
+**[下载 DMG 安装包](https://github.com/TailorLiuuu/UTA/releases/download/v0.1.0-preview.16/UTA-0.1.0-macOS-arm64.dmg)** ·
+[Release 与 ZIP 备用包](https://github.com/TailorLiuuu/UTA/releases/tag/v0.1.0-preview.16) ·
 [首次安装指南](docs/INSTALL-macOS.md)
 
 适用于 Apple Silicon / macOS 26，需另行安装 Python 3.9+。打开 DMG，将 UTA 拖入
@@ -41,6 +41,8 @@ Preview 11 禁止跨服务器抢占已分配的 USB：其他服务器页面不�
 Preview 14 增加独立会话认证、客户端凭据及资源上限。共用 root 时，常规云端 CLI 也只管理当前客户端的设备；无凭据会报错，管理员需显式使用 `--admin`。升级需要两端配套，请先完成旧连接并断开清理。见 [客户端上下文指南](docs/CLIENT-IDENTITY.md) 与 [安全边界](docs/SECURITY.md)。
 
 Preview 15 为新接入会话增加云端独立的 60 秒失联保护：Mac 无法发送清理请求时，也能释放原会话端口。需更新 Mac App 和云端 CLI；旧连接不被强制转换。保护机制不向 USB 数据流加入心跳、不限制吞吐。
+
+Preview 16 修复 macOS USB 库对高编号接口（32–255）的限制，并在授权接入失败时显示具体接口和错误。适用于 EC600M 等具有稀疏接口编号的复合设备；本次已通过离线回归，EC600M 实机接入尚未验证。需更新本机 App 并在设备全部断开后停用、重新启用 USB 接管服务；云端 CLI 保持 Preview 15，无需重复更新。
 
 ## 可选 CH340 串口加速
 
@@ -78,7 +80,7 @@ USB 请求由远端发起，经 UTA 到达本地设备。服务端没有实体 U
 | 位置 | 要求 |
 | --- | --- |
 | Mac 运行端 | Apple Silicon、macOS 26、Python 3.9+、系统 OpenSSH |
-| Mac 构建端 | Xcode 工具链及 macOS SDK、CMake 3.22+、pkg-config、libusb |
+| Mac 构建端 | Xcode 工具链及 macOS SDK、CMake 3.22+、pkg-config、make |
 | Linux 服务端 | Python 3.9+、OpenSSH、启用 `CONFIG_USBIP_VHCI_HCD` 的内核 |
 | 权限 | Mac 接管辅助服务需系统批准；Linux 挂载需 root 或管理员配置的受限 sudo 权限 |
 | 网络 | Mac 能通过 SSH 登录服务器；服务器允许 remote TCP forwarding |
@@ -94,7 +96,7 @@ git clone https://github.com/TailorLiuuu/UTA.git
 cd UTA
 
 # 已安装 Homebrew 时，可用它安装构建依赖
-brew install cmake pkg-config libusb python
+brew install cmake pkg-config python
 
 # 查看本机可用的签名证书
 security find-identity -v -p codesigning
@@ -103,7 +105,8 @@ security find-identity -v -p codesigning
 UTA_SIGN_IDENTITY="Developer ID Application: YOUR NAME (TEAM_ID)" bash scripts/build.sh
 ```
 
-构建脚本不会下载源码依赖；USB/IP、Asio、spdlog 源码已包含在 `vendor/`。
+USB/IP、Asio、spdlog 及固定版本 libusb 源码已包含在 `vendor/`。
+libusb 会先验证源码校验和、应用 Darwin 接口编号补丁，再同时构建 App 和辅助服务所用的动态／静态库；不修改 Homebrew 库。Sparkle 由构建脚本按固定版本获取。
 App 与接管辅助服务使用同一签名身份。默认本地构建不添加可信时间戳；
 发布构建设置 `UTA_SIGN_TIMESTAMP=secure`，需要连接 Apple 时间戳服务。脚本不执行公证。
 

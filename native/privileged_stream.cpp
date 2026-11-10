@@ -12,7 +12,7 @@ extern "C" __attribute__((visibility("default")))
 int uta_export_stream(int fd, int logfd, const char *busid, const char *vidpid, const char *serial) {
     int outcome = 1;
     bool adopted = false;
-    auto report = [&](const std::string &message) {
+    auto report = [logfd](const std::string &message) {
         auto line = message + "\n";
         write(logfd, line.data(), line.size());
     };
@@ -21,7 +21,8 @@ int uta_export_stream(int fd, int logfd, const char *busid, const char *vidpid, 
         close(fd); close(logfd); return 1;
     }
     try {
-        usbipdcpp::LibusbServer server({.skip_hub = true, .auto_bind_hotplug = false});
+        usbipdcpp::LibusbServer server({.skip_hub = true, .auto_bind_hotplug = false,
+                                      .import_diagnostic = report});
         auto *device = usbipdcpp::LibusbServer::find_by_busid(busid);
         if (!device) throw std::runtime_error("Selected USB is no longer present");
         libusb_device_descriptor d{};

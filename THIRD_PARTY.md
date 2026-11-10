@@ -28,14 +28,19 @@ VirtualHere or USB Network Gate proprietary code.
 - spdlog headers copied from the existing ESP-IDF component checkout.
   MIT; `vendor/SPDLOG_LICENSE.txt`.
 - libusb 1.0.30, https://github.com/libusb/libusb, LGPL-2.1-or-later.
-  The application bundles the locally installed dynamic library, replaceable
+  The application bundles a locally built dynamic library, replaceable
   in `Contents/Resources/bin`. Upstream corresponding source:
   https://github.com/libusb/libusb/releases/tag/v1.0.30
-  The source/build package contains our application source and build scripts.
+  `vendor/libusb/` includes the pinned upstream source archive and our Darwin
+  patch for USB interface numbers 0–255 (a 256-bit claimed-interface bitmap,
+  widened iteration counters and capture/reset restoration). Other platforms
+  retain upstream limits. `scripts/build-libusb.sh` verifies the archive hash
+  and builds both shared and static libraries from these sources.
   The privileged helper statically links the same libusb version to avoid
   loading user-writable third-party code after authorization. Obtain its
-  corresponding source from the release above and replace the library used
-  by pkg-config before rebuilding the helper with `scripts/build.sh`.
+  corresponding source from the UTA source release, edit the patch or build
+  script as needed, then rebuild the helper with `scripts/build.sh` and your
+  own signing identity. Reauthorize the rebuilt helper as necessary.
 
 Local application and agent sources are supplied for review and modification;
 no commercial redistribution license is chosen for these new files yet.

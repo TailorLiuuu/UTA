@@ -1,0 +1,215 @@
+--- a/libusb/libusbi.h
++++ b/libusb/libusbi.h
+@@ -147,7 +147,44 @@
+ #endif
+ 
+ #define USB_MAXENDPOINTS	32
+-#define USB_MAXINTERFACES	32
++/* UTA: bInterfaceNumber is an octet, not a descriptor-array index.
++ * Darwin needs all 256 values (including sparse modem interfaces >= 32).
++ * Keep other backends' existing mask ABI and limit unchanged. */
++#ifdef __APPLE__
++#define USB_MAXINTERFACES 256
++typedef struct { uint64_t words[4]; } usbi_interface_mask;
++static inline int usbi_interface_test(usbi_interface_mask mask, unsigned int n)
++{
++    return n < USB_MAXINTERFACES && (mask.words[n / 64] & (UINT64_C(1) << (n % 64)));
++}
++static inline void usbi_interface_set(usbi_interface_mask *mask, unsigned int n)
++{
++    if (n < USB_MAXINTERFACES) mask->words[n / 64] |= UINT64_C(1) << (n % 64);
++}
++static inline void usbi_interface_clear(usbi_interface_mask *mask, unsigned int n)
++{
++    if (n < USB_MAXINTERFACES) mask->words[n / 64] &= ~(UINT64_C(1) << (n % 64));
++}
++static inline int usbi_interface_empty(usbi_interface_mask mask)
++{
++    return !(mask.words[0] | mask.words[1] | mask.words[2] | mask.words[3]);
++}
++#else
++#define USB_MAXINTERFACES 32
++typedef unsigned long usbi_interface_mask;
++static inline int usbi_interface_test(usbi_interface_mask mask, unsigned int n)
++{
++    return n < USB_MAXINTERFACES && (mask & (1UL << n));
++}
++static inline void usbi_interface_set(usbi_interface_mask *mask, unsigned int n)
++{
++    if (n < USB_MAXINTERFACES) *mask |= 1UL << n;
++}
++static inline void usbi_interface_clear(usbi_interface_mask *mask, unsigned int n)
++{
++    if (n < USB_MAXINTERFACES) *mask &= ~(1UL << n);
++}
++#endif
+ #define USB_MAXCONFIG		8
+ 
+ /* Backend specific capabilities */
+@@ -530,7 +567,7 @@
+ struct libusb_device_handle {
+ 	/* lock protects claimed_interfaces */
+ 	usbi_mutex_t lock;
+-	unsigned long claimed_interfaces;
++	usbi_interface_mask claimed_interfaces;
+ 
+ 	struct list_head list;
+ 	struct libusb_device *dev;
+--- a/libusb/core.c
++++ b/libusb/core.c
+@@ -1839,12 +1839,12 @@
+ 		return LIBUSB_ERROR_NO_DEVICE;
+ 
+ 	usbi_mutex_lock(&dev_handle->lock);
+-	if (dev_handle->claimed_interfaces & (1U << interface_number))
++	if (usbi_interface_test(dev_handle->claimed_interfaces, interface_number))
+ 		goto out;
+ 
+ 	r = usbi_backend.claim_interface(dev_handle, (uint8_t)interface_number);
+ 	if (r == 0)
+-		dev_handle->claimed_interfaces |= 1U << interface_number;
++		usbi_interface_set(&dev_handle->claimed_interfaces, interface_number);
+ 
+ out:
+ 	usbi_mutex_unlock(&dev_handle->lock);
+@@ -1880,14 +1880,14 @@
+ 		return LIBUSB_ERROR_INVALID_PARAM;
+ 
+ 	usbi_mutex_lock(&dev_handle->lock);
+-	if (!(dev_handle->claimed_interfaces & (1U << interface_number))) {
++	if (!(usbi_interface_test(dev_handle->claimed_interfaces, interface_number))) {
+ 		r = LIBUSB_ERROR_NOT_FOUND;
+ 		goto out;
+ 	}
+ 
+ 	r = usbi_backend.release_interface(dev_handle, (uint8_t)interface_number);
+ 	if (r == 0)
+-		dev_handle->claimed_interfaces &= ~(1U << interface_number);
++		usbi_interface_clear(&dev_handle->claimed_interfaces, interface_number);
+ 
+ out:
+ 	usbi_mutex_unlock(&dev_handle->lock);
+@@ -1930,7 +1930,7 @@
+ 	}
+ 
+ 	usbi_mutex_lock(&dev_handle->lock);
+-	if (!(dev_handle->claimed_interfaces & (1U << interface_number))) {
++	if (!(usbi_interface_test(dev_handle->claimed_interfaces, interface_number))) {
+ 		usbi_mutex_unlock(&dev_handle->lock);
+ 		return LIBUSB_ERROR_NOT_FOUND;
+ 	}
+--- a/libusb/os/darwin_usb.c
++++ b/libusb/os/darwin_usb.c
+@@ -471,7 +471,8 @@
+   /* current interface */
+   struct darwin_interface *cInterface;
+ 
+-  uint8_t i, iface;
++  uint8_t i;
++  unsigned int iface;
+ 
+   struct libusb_context *ctx = HANDLE_CTX(dev_handle);
+ 
+@@ -481,7 +482,7 @@
+   for (iface = 0 ; iface < USB_MAXINTERFACES ; iface++) {
+     cInterface = &priv->interfaces[iface];
+ 
+-    if (dev_handle->claimed_interfaces & (1U << iface)) {
++    if (usbi_interface_test(dev_handle->claimed_interfaces, iface)) {
+       for (i = 0 ; i < cInterface->num_endpoints ; i++) {
+         if (cInterface->endpoint_addrs[i] == ep) {
+           *pipep = i + 1;
+@@ -1657,7 +1658,7 @@
+ 
+   /* make sure all interfaces are released */
+   for (i = 0 ; i < USB_MAXINTERFACES ; i++)
+-    if (dev_handle->claimed_interfaces & (1U << i))
++    if (usbi_interface_test(dev_handle->claimed_interfaces, i))
+       libusb_release_interface (dev_handle, i);
+ 
+   if (0 == dpriv->open_count) {
+@@ -1692,7 +1693,7 @@
+ static enum libusb_error darwin_set_configuration(struct libusb_device_handle *dev_handle, int config) {
+   struct darwin_cached_device *dpriv = DARWIN_CACHED_DEVICE(dev_handle->dev);
+   IOReturn kresult;
+-  uint8_t i;
++  unsigned int i;
+ 
+   if (config == -1)
+     config = 0;
+@@ -1700,7 +1701,7 @@
+   /* Setting configuration will invalidate the interface, so we need
+      to reclaim it. First, dispose of existing interfaces, if any. */
+   for (i = 0 ; i < USB_MAXINTERFACES ; i++)
+-    if (dev_handle->claimed_interfaces & (1U << i))
++    if (usbi_interface_test(dev_handle->claimed_interfaces, i))
+       darwin_release_interface (dev_handle, i);
+ 
+   kresult = (*dpriv->device)->SetConfiguration (dpriv->device, (UInt8)config);
+@@ -1709,7 +1710,7 @@
+ 
+   /* Reclaim any interfaces. */
+   for (i = 0 ; i < USB_MAXINTERFACES ; i++)
+-    if (dev_handle->claimed_interfaces & (1U << i))
++    if (usbi_interface_test(dev_handle->claimed_interfaces, i))
+       darwin_claim_interface (dev_handle, i);
+ 
+   dpriv->active_config = (UInt8)config;
+@@ -2076,7 +2077,7 @@
+ }
+ 
+ static int darwin_restore_state (struct libusb_device_handle *dev_handle, uint8_t active_config,
+-                                 unsigned long claimed_interfaces) {
++                                 usbi_interface_mask claimed_interfaces) {
+   struct darwin_cached_device *dpriv = DARWIN_CACHED_DEVICE(dev_handle->dev);
+   struct darwin_device_handle_priv *priv = usbi_get_device_handle_priv(dev_handle);
+   int open_count = dpriv->open_count;
+@@ -2085,7 +2086,7 @@
+   struct libusb_context *ctx = HANDLE_CTX (dev_handle);
+ 
+   /* clear claimed interfaces temporarily */
+-  dev_handle->claimed_interfaces = 0;
++  memset(&dev_handle->claimed_interfaces, 0, sizeof(dev_handle->claimed_interfaces));
+ 
+   /* close and re-open the device */
+   priv->is_open = false;
+@@ -2114,9 +2115,9 @@
+ 
+   usbi_dbg (ctx, "darwin/restore_state: reclaiming interfaces");
+ 
+-  if (claimed_interfaces) {
+-    for (uint8_t iface = 0 ; iface < USB_MAXINTERFACES ; ++iface) {
+-      if (!(claimed_interfaces & (1U << iface))) {
++  if (!usbi_interface_empty(claimed_interfaces)) {
++    for (unsigned int iface = 0 ; iface < USB_MAXINTERFACES ; ++iface) {
++      if (!(usbi_interface_test(claimed_interfaces, iface))) {
+         continue;
+       }
+ 
+@@ -2128,7 +2129,7 @@
+         return LIBUSB_ERROR_NOT_FOUND;
+       }
+ 
+-      dev_handle->claimed_interfaces |= 1U << iface;
++      usbi_interface_set(&dev_handle->claimed_interfaces, iface);
+     }
+   }
+ 
+@@ -2139,7 +2140,7 @@
+ 
+ static int darwin_reenumerate_device (struct libusb_device_handle *dev_handle, bool capture) {
+   struct darwin_cached_device *dpriv = DARWIN_CACHED_DEVICE(dev_handle->dev);
+-  unsigned long claimed_interfaces = dev_handle->claimed_interfaces;
++  usbi_interface_mask claimed_interfaces = dev_handle->claimed_interfaces;
+   uint8_t active_config = dpriv->active_config;
+   UInt32 options = 0;
+   IOUSBDeviceDescriptor descriptor;
+@@ -2262,7 +2263,7 @@
+   if ((ret == LIBUSB_SUCCESS || ret == LIBUSB_ERROR_NOT_FOUND) && dpriv->capture_count > 0) {
+     int capture_count;
+     uint8_t active_config = dpriv->active_config;
+-    unsigned long claimed_interfaces = dev_handle->claimed_interfaces;
++    usbi_interface_mask claimed_interfaces = dev_handle->claimed_interfaces;
+ 
+     /* save old capture_count */
+     capture_count = dpriv->capture_count;

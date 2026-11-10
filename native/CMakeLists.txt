@@ -40,3 +40,6 @@ set_target_properties(uta-native PROPERTIES
     BUILD_WITH_INSTALL_RPATH TRUE INSTALL_RPATH "@loader_path")
 add_executable(uta-test-fixture ../tests/native_fixture.cpp)
 target_link_libraries(uta-test-fixture PRIVATE uta_transport)
+add_executable(uta-test-import-diagnostics ../tests/native_import_diagnostics.cpp)
+target_compile_options(uta-test-import-diagnostics PRIVATE -UNDEBUG)
+target_link_libraries(uta-test-import-diagnostics PRIVATE uta_transport)

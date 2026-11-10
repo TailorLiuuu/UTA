@@ -1,5 +1,6 @@
 """Read-only macOS USB ownership observations. Never opens or claims an interface."""
 import plistlib
+import re
 import subprocess
 import time
 
@@ -110,6 +111,19 @@ def connection_error(error, log):
     """Keep the raw protocol error in logs; show the observed local cause first."""
     if "USB/IP request rejected" not in error:
         return error
+    # Prefer the terminal failure, not an earlier non-fatal detach warning.
+    failures = re.findall(r"^USB import: stage=(open|configuration|claim) interface=(-?\d+) error=(LIBUSB_ERROR_[A-Z_]+) \(([^\n]+)\)$", log, re.M)
+    if failures:
+        stage, number, code, detail = failures[-1]
+        operation = {"open": "打开设备", "configuration": "读取配置", "claim": "接管接口"}[stage]
+        target = f" {number}" if stage == "claim" else ""
+        reason = {
+            "LIBUSB_ERROR_BUSY": "接口正在被占用，请查看 USB 占用诊断并关闭对应的设备工具。",
+            "LIBUSB_ERROR_ACCESS": "系统拒绝访问。若已授权，请查看占用诊断及辅助服务状态，无需反复授权。",
+            "LIBUSB_ERROR_INVALID_PARAM": "USB 接口参数不受当前组件支持，请更新 UTA 及本机辅助服务。",
+            "LIBUSB_ERROR_NO_DEVICE": "设备已断开或切换模式，请等待重新识别。",
+        }.get(code, "请查看 USB 日志中的具体原因。")
+        return f"Mac {operation}{target}失败：{reason}（{code}: {detail}）"
     denied = [line for line in log.splitlines() if "Access denied" in line]
     busy = [line for line in log.splitlines() if "Resource busy" in line]
     if denied:

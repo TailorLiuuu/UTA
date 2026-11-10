@@ -35,7 +35,9 @@ private func fail(_ text: String) -> Never {
                 guard let stream, let log else { fail(error ?? "USB 服务没有返回数据通道") }
                 json(["ready": true])
                 ready.signal()
+                let logFinished = DispatchSemaphore(value: 0)
                 DispatchQueue.global().async {
+                    defer { logFinished.signal() }
                     while let data = try? readUSBChunk(log), !data.isEmpty {
                         FileHandle.standardError.write(data)
                     }
@@ -50,6 +52,10 @@ private func fail(_ text: String) -> Never {
                     while let data = try? readUSBChunk(stream), !data.isEmpty {
                         do { try FileHandle.standardOutput.write(contentsOf: data) } catch { break }
                     }
+                    // A rejected import closes the data stream immediately;
+                    // allow the independent log pipe to deliver its cause.
+                    // This runs only at EOF, never on the USB data path.
+                    _ = logFinished.wait(timeout: .now() + 0.3)
                     connection.invalidationHandler = nil
                     connection.invalidate()
                     exit(0)

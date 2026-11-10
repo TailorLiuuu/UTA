@@ -39,11 +39,13 @@ uta_codesign() {
 uta_root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$uta_root"
 mkdir -p build dist
+bash scripts/build-libusb.sh
+export PKG_CONFIG_PATH="$uta_root/build/libusb/install/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 bash scripts/fetch-sparkle.sh
 python3 scripts/build-server.py
 swift -module-cache-path "$uta_root/build/swift-cache" scripts/generate-icons.swift "$uta_root/build/branding"
 iconutil -c icns "$uta_root/build/branding/UTA.iconset" -o "$uta_root/build/branding/UTA.icns"
-cmake -S native -B build/native -DCMAKE_BUILD_TYPE=Release
+cmake -S native -B build/native -DCMAKE_BUILD_TYPE=Release -U '*USB*'
 cmake --build build/native -j 6
 # File-provider metadata in a synced Documents folder can invalidate app signing.
 # Sign and archive outside that folder; the ZIP is the distributable artifact.
@@ -127,7 +129,7 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 <key>CFBundleIconFile</key><string>UTA.icns</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>0.1.0</string>
-<key>CFBundleVersion</key><string>27</string>
+<key>CFBundleVersion</key><string>28</string>
 <key>CFBundleDevelopmentRegion</key><string>zh-Hans</string>
 <key>CFBundleLocalizations</key><array><string>zh-Hans</string><string>en</string></array>
 <key>SUFeedURL</key><string>https://raw.githubusercontent.com/TailorLiuuu/UTA/main/updates/appcast.xml</string>
