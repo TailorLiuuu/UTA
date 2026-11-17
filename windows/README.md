@@ -44,3 +44,13 @@ After a forced process termination, usbipd may retain the local sharing flag;
 verify the device is no longer attached, then unbind that specific device in
 usbipd before reconnecting. This initial preview requires Python 3.9+ and Git
 for Windows on the tested configuration; it is not a standalone EXE installer.
+
+Encrypted file transfer is also available through `uta.cmd send`, `transfers`
+and `run`. It reuses saved server configurations and the client's identity,
+supports Linux/macOS/Windows receivers, and does not bind or open USB devices.
+See [the transfer guide](../docs/TRANSFERS.md) (included as `TRANSFERS.md` in the
+preview ZIP) for checksummed resume, project isolation and explicit tool execution.
+
+## Authorize a development Mac
+
+Select a connected device and its server, then click **Authorize client** and paste the Mac's public ID from `uta port identity --to SERVER`. This grants access to that device for 24 hours; **Revoke client** stops access, including active operations. No full client credential is shared. The receiver must report `device_operations: 1`. See `REMOTE-DEVICES.md` for `uta port list/share/run/logs` and reconnection limits.

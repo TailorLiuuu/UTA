@@ -4,6 +4,14 @@
 All USB sockets are reached on loopback through an SSH reverse tunnel.
 Install this file root-owned; do not grant sudo to a user-writable copy.
 """
+import sys
+import uta_transfer
+
+# File transfer runs as the SSH account, including on macOS/Windows. It must
+# dispatch before loading Linux USB dependencies and never requests sudo.
+if __name__ == '__main__' and sys.argv[1:2] == ['transfer']:
+    sys.exit(uta_transfer.main())
+
 import argparse
 import contextlib
 import fcntl
@@ -21,10 +29,12 @@ import time
 import uta_ch341
 import uta_auth
 import uta_client
+import uta_port_server
 
-VERSION = "0.1.0-preview.15"
+VERSION = "0.1.0-preview.17"
 VHCI = Path("/sys/devices/platform/vhci_hcd.0")
 STATE = Path("/run/uta")
+PORT_HISTORY = Path("/var/lib/uta-operations")
 # Keep existing live session records accessible when upgrading an older agent.
 if not STATE.exists() and Path("/run/usbbridge").is_dir():
     STATE = Path("/run/usbbridge")
@@ -223,6 +233,7 @@ def record_status(record):
 def doctor():
     return dict(version=VERSION, platform=sys.platform, python=sys.version.split()[0],
                 route_identity=True, session_auth=uta_auth.PROTOCOL, client_identity=uta_client.PROTOCOL,
+                transfer_protocol=uta_transfer.PROTOCOL, device_operations=uta_port_server.PROTOCOL,
                 session_lease=True,
                 ch341_tuning=uta_ch341.status(),
                 uid=owner(), root=os.geteuid() == 0, vhci_available=VHCI.exists(),
@@ -418,6 +429,7 @@ def main():
     tune.add_argument("action", choices=("status", "build", "enable", "disable", "setup"))
     tune.add_argument("--install-dependencies", action="store_true",
                       help="Allow setup to install missing build packages via apt-get")
+    port = sub.add_parser("port", help="Device-scoped delegation and streamed operations over SSH stdin")
     listing = sub.add_parser("list")
     status = sub.add_parser("status")
     status.add_argument("--session", required=True)
@@ -436,7 +448,7 @@ def main():
     remove.add_argument("--session", required=True)
     resolve = sub.add_parser('resolve', help='Resolve an owned route to its current device nodes after reconnection')
     resolve.add_argument('--route', required=True)
-    for command in (listing, status, add, remove, resolve, watch):
+    for command in (listing, status, add, remove, resolve, watch, port):
         group = command.add_mutually_exclusive_group()
         group.add_argument('--client-stdin', action='store_true', help='Read client credential as the first line of stdin')
         group.add_argument('--client-file', help='Private credential file; otherwise use UTA_CLIENT_CREDENTIAL_FILE')
@@ -448,7 +460,7 @@ def main():
             raise RuntimeError("This CLI must run on Linux, not on the Mac")
         client = None
         admin = getattr(args, 'admin', False)
-        if args.command in ('list', 'status', 'attach', 'detach', 'resolve', 'watch-lease'):
+        if args.command in ('list', 'status', 'attach', 'detach', 'resolve', 'watch-lease', 'port'):
             if admin:
                 client_scope(admin=True)
             elif args.client_stdin:
@@ -458,6 +470,9 @@ def main():
                 if not path:
                     client_scope()
                 client = uta_client.read_file(path, owners={0, owner()})
+        if args.command == "port":
+            uta_port_server.serve(sys.modules[__name__], client, sys.stdin.buffer, sys.stdout.buffer)
+            return 0
         if args.command == "tune-ch341":
             result = uta_ch341.dispatch(args.action, args.install_dependencies)
         elif args.command == "doctor":

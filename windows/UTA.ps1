@@ -20,7 +20,26 @@ $connect=New-Object Windows.Forms.Button;$connect.Text='Connect';$connect.SetBou
 $disconnect=New-Object Windows.Forms.Button;$disconnect.Text='Disconnect';$disconnect.SetBounds(175,445,140,36);$f.Controls.Add($disconnect)
 $cleanup=New-Object Windows.Forms.Button;$cleanup.Text='Retry cleanup';$cleanup.SetBounds(330,445,150,36);$f.Controls.Add($cleanup)
 $status=New-Object Windows.Forms.TextBox;$status.Multiline=$true;$status.ReadOnly=$true;$status.ScrollBars='Vertical';$status.SetBounds(20,495,830,70);$f.Controls.Add($status)
-$script:operation=$null;$script:serverIds=@();$script:lastRefresh=0
+$share=New-Object Windows.Forms.Button;$share.Text='Authorize client';$share.SetBounds(500,445,160,36);$f.Controls.Add($share)
+$revoke=New-Object Windows.Forms.Button;$revoke.Text='Revoke client';$revoke.SetBounds(675,445,160,36);$f.Controls.Add($revoke)
+$script:operation=$null;$script:serverIds=@();$script:lastRefresh=0;$script:sessionRows=@()
+function Device-Grant([string]$Action){
+ $bus=Selected-Bus;$sid=Selected-Server
+ $row=$script:sessionRows | Where-Object {$_.busid -eq $bus -and $_.server_id -eq $sid} | Select-Object -First 1
+ if(-not $row -or $row.state -notin @('attached','enumerating')){throw 'Select a device connected to this server first'}
+ $id=if($row.route_id){$row.route_id}else{$row.session}
+ $d=New-Object Windows.Forms.Form;$d.Text='Device authorization (24 hours)';$d.Size=New-Object Drawing.Size(600,200);$d.StartPosition='CenterParent';$d.Font=$font
+ $l=New-Object Windows.Forms.Label;$l.Text='Paste the receiving Mac client ID (not a password or SSH key):';$l.SetBounds(20,15,550,25);$d.Controls.Add($l)
+ $t=New-Object Windows.Forms.TextBox;$t.SetBounds(20,50,550,28);$d.Controls.Add($t)
+ $ok=New-Object Windows.Forms.Button;$ok.Text=$Action;$ok.SetBounds(430,100,140,32);$ok.DialogResult='OK';$d.Controls.Add($ok);$d.AcceptButton=$ok
+ if($d.ShowDialog($f) -eq 'OK'){
+  $recipient=$t.Text.Trim();if($recipient -cnotmatch '^[0-9a-f]{64}$'){throw 'Invalid client ID'}
+  if($Action -eq 'revoke' -and [Windows.Forms.MessageBox]::Show('Revocation stops active tools and logs for this client. Interrupted flashing may require recovery. Continue?','UTA','OKCancel') -ne 'OK'){return}
+  Start-UTA @('port',$Action,'--to',$sid,'--id',$id,'--recipient',$recipient)
+ };$d.Dispose()
+}
+$share.Add_Click({UI-Action {Device-Grant 'share'}})
+$revoke.Add_Click({UI-Action {Device-Grant 'revoke'}})
 function Start-UTA([string[]]$Arguments){
  if($script:operation){return}
  foreach($s in $Arguments){if($s.Contains('"')){throw 'Double quotes are not allowed'}}
@@ -55,6 +74,7 @@ $timer.Add_Tick({
   try{
    $v=$text | ConvertFrom-Json;if(-not $v.ok){throw $v.error}
    if($script:command -eq 'status'){
+    $script:sessionRows=@($v.result.sessions)
     $old=if($servers.SelectedIndex -ge 0){$script:serverIds[$servers.SelectedIndex]}else{''}
     $servers.Items.Clear();$script:serverIds=@()
     foreach($s in $v.result.servers.PSObject.Properties){$script:serverIds+= $s.Name;[void]$servers.Items.Add($s.Value.name)}

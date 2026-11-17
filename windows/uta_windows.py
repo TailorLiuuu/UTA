@@ -3,6 +3,14 @@ import argparse, contextlib, hashlib, json, os, re, secrets, shlex, shutil, sock
 import subprocess, sys, threading, time, uuid
 from pathlib import Path
 import uta_auth
+try:
+    import uta_transfer
+except ModuleNotFoundError:
+    # Source checkout; installer copies the same shared module beside this CLI.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'python'))
+    import uta_transfer
+
+import uta_port
 
 HOME = Path(os.environ.get('UTA_WINDOWS_HOME', str(Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'UTAWindows')))
 USBIPD = shutil.which('usbipd') or r'C:\Program Files\usbipd-win\usbipd.exe'
@@ -158,8 +166,8 @@ def worker(busid,sid):
     with lock('device-'+busid):
         statepath=HOME/(busid+'.session.json'); previous=read(statepath,{})
         if previous.get('cleanup_pending'): raise RuntimeError('Retry cleanup before reconnecting')
-        host=servers()[sid]['target']; cred=credential(sid); session=uuid.uuid4().hex
-        state=dict(busid=busid,server_id=sid,session=session,state='checking',nodes=[],cleanup_pending=False)
+        host=servers()[sid]['target']; cred=credential(sid); session=uuid.uuid4().hex; route=uuid.uuid4().hex
+        state=dict(busid=busid,server_id=sid,session=session,route_id=route,state='checking',nodes=[],cleanup_pending=False)
         stopfile=HOME/(session+'.stop'); relay=None; tunnel=None; bound=False; attempted=False
         def update(**kw): state.update(kw); save(statepath,state)
         update()
@@ -182,7 +190,7 @@ def worker(busid,sid):
                 time.sleep(.1)
             if not port: raise RuntimeError('SSH reverse forwarding was not confirmed')
             attempted=True; update(state='connecting',cleanup_pending=True)
-            result=remote(host,['attach','--session',session,'--port',str(port),'--busid',busid,'--auth-stdin','--lease-seconds','60'],cred,auth)
+            result=remote(host,['attach','--session',session,'--port',str(port),'--busid',busid,'--auth-stdin','--lease-seconds','60',*(['--route',route] if info.get('route_identity') else [])],cred,auth)
             update(state=result['state'],nodes=result.get('nodes',[]))
             while not stopfile.exists() and not relay.stop.wait(1):
                 if tunnel.poll() is not None: raise RuntimeError('SSH tunnel stopped')
@@ -210,6 +218,8 @@ def worker(busid,sid):
 
 def main():
     p=argparse.ArgumentParser(prog='uta');sub=p.add_subparsers(dest='command',required=True)
+    uta_transfer.add_commands(sub)
+    uta_port.add_commands(sub)
     for name in ['devices','status']:sub.add_parser(name)
     x=sub.add_parser('server-add');x.add_argument('name');x.add_argument('target')
     x=sub.add_parser('check');x.add_argument('--server',required=True)
@@ -218,6 +228,22 @@ def main():
     for name in ['disconnect','cleanup']:
         x=sub.add_parser(name);x.add_argument('--device',required=True)
     a=p.parse_args();init()
+    if a.command == 'port':
+        if getattr(a,'raw',False) and os.name == 'nt':
+            import msvcrt
+            msvcrt.setmode(sys.stdout.fileno(),os.O_BINARY)
+        values=[dict(id=sid,**v) for sid,v in servers().items()]
+        result=uta_port.dispatch(a,values,credential,lambda s:ssh_args(s['target']))
+        success=not isinstance(result,dict) or uta_port.succeeded(result, a.port_action)
+        print(json.dumps(dict(ok=success,result=result),ensure_ascii=False),file=sys.stderr if getattr(a,'raw',False) else sys.stdout)
+        sys.exit(0 if success else 1)
+    if a.command in ('send','transfers','run'):
+        values=[dict(id=sid,**v) for sid,v in servers().items()]
+        result=uta_transfer.dispatch(a,values,credential,lambda s:ssh_args(s['target']))
+        execution=result.get('execution',{})
+        if execution and (execution.get('state')!='completed' or execution.get('exit_code')!=0):
+            print(json.dumps(dict(ok=False,result=result),ensure_ascii=False));sys.exit(1)
+        return result
     if a.command=='devices':return devices()
     if a.command=='status':return dict(devices=devices(),servers=servers(),sessions=[read(x,{}) for x in HOME.glob('*.session.json')])
     if a.command=='server-add':
@@ -247,4 +273,4 @@ def main():
 
 if __name__=='__main__':
     try:print(json.dumps(dict(ok=True,result=main()),ensure_ascii=False))
-    except Exception as exc:print(json.dumps(dict(ok=False,error=str(exc)),ensure_ascii=False));sys.exit(1)
+    except Exception as exc:print(json.dumps(dict(ok=False,error=str(exc)),ensure_ascii=False),file=sys.stderr if '--raw' in sys.argv else sys.stdout);sys.exit(1)

@@ -60,7 +60,7 @@ swiftc -swift-version 5 -parse-as-library -O \
     -file-prefix-map "$uta_root=/uta-src" -file-prefix-map "$stage=/uta-build" \
     -module-cache-path "$uta_root/build/swift-cache" \
     -F "$app/Contents/Frameworks" -framework Sparkle -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
-    macos/UTA.swift macos/DeviceListPolicy.swift macos/Localization.swift macos/AppSettings.swift macos/AppUpdate.swift macos/USBPermission.swift macos/USBHelperProtocol.swift -o "$app/Contents/MacOS/UTA"
+    macos/UTA.swift macos/RemoteDevices.swift macos/LinkGraph.swift macos/LinkCanvas.swift macos/DeviceListPolicy.swift macos/Localization.swift macos/AppSettings.swift macos/AppUpdate.swift macos/USBPermission.swift macos/USBHelperProtocol.swift -o "$app/Contents/MacOS/UTA"
 swiftc -swift-version 5 -parse-as-library -O \
     -file-prefix-map "$uta_root=/uta-src" -file-prefix-map "$stage=/uta-build" \
     -module-cache-path "$uta_root/build/swift-cache" \
@@ -129,7 +129,7 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 <key>CFBundleIconFile</key><string>UTA.icns</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>0.1.0</string>
-<key>CFBundleVersion</key><string>28</string>
+<key>CFBundleVersion</key><string>30</string>
 <key>CFBundleDevelopmentRegion</key><string>zh-Hans</string>
 <key>CFBundleLocalizations</key><array><string>zh-Hans</string><string>en</string></array>
 <key>SUFeedURL</key><string>https://raw.githubusercontent.com/TailorLiuuu/UTA/main/updates/appcast.xml</string>

@@ -1,5 +1,14 @@
 # Changes
 
+## Build 30 — v0.1.0-preview.17 · 2026-11-18
+
+- Add SSH-encrypted, SHA-256 verified resumable firmware transfers and explicit remote tool execution, scoped by account, client and workspace.
+- Add device-specific grants with expiry/revocation, current-node lookup, mutually exclusive tools/log readers, bounded output and persistent operation receipts. Tools retain the SSH account UID even when the management broker uses sudo.
+- Add the server-page remote device/log panel and Windows authorization controls. The link workspace remains optional for complex topologies; drawing a link never starts flashing.
+- Ship Windows preview source installer alongside macOS DMG/ZIP and the standalone cloud CLI. Existing USB transport/helper binaries and chip-specific tools are unchanged.
+- Validation: 20 isolated Linux device-operation tests, Mac UI/CLI fixtures, transfer regression, Windows client simulation and localization checks passed. The existing native inventory interposer fixture remains unresolved; no new physical flash, Windows UI acceptance, throughput or loss-rate claim is made. See REMOTE-DEVICES-VALIDATION.md.
+- Update clients and cloud CLI together after finishing active work. Manual reconnection may require selecting/authorizing a new device ID; Windows download-mode automatic reconnection remains a limitation.
+
 ## Build 28 — v0.1.0-preview.16 · 2026-11-10
 
 - Build bundled libusb 1.0.30 from hash-pinned source with a Darwin-only patch

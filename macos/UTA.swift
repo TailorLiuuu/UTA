@@ -806,6 +806,8 @@ struct ContentView: View {
     @State private var editing: Host?
     @State private var help = false
     @State private var settings = false
+    @State private var showingLinks = false
+    @StateObject private var linkWorkspace = LinkWorkspace()
     @State private var removing: Host?
     @State private var importing = false
     @State private var manualHost: Host?
@@ -836,12 +838,18 @@ struct ContentView: View {
         HStack(spacing: 0) {
             sidebar
             Divider()
+            if showingLinks {
+                LinkCanvasView(workspace: linkWorkspace).environmentObject(model)
+            } else {
             VStack(alignment: .leading, spacing: 0) {
                 header
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
                         UpdateBanner()
-                        if let selected { serverPanel(selected) }
+                        if let selected {
+                            serverPanel(selected)
+                            RemoteDevicePanel(host: selected).id(selected.id)
+                        }
                         USBPermissionView()
                         HStack {
                             Text(L("USB 设备")).font(.system(size: 18, weight: .semibold))
@@ -910,6 +918,7 @@ struct ContentView: View {
                 }.font(.system(size: 10)).foregroundStyle(muted)
                     .padding(.horizontal, 28).padding(.vertical, 12)
             }.background(Color(red: 0.965, green: 0.973, blue: 0.976))
+            }
         }
         .frame(minWidth: 1000, minHeight: 660)
         .disabled(updater.checking || model.suspendedForUpdate)
@@ -978,7 +987,7 @@ struct ContentView: View {
                 }
             }.padding(.horizontal, 22).padding(.top, 30).padding(.bottom, 30)
             Button {
-                model.selected = nil
+                model.selected = nil; showingLinks = false
             } label: {
                 HStack {
                     Image(systemName: "square.grid.2x2")
@@ -988,8 +997,15 @@ struct ContentView: View {
                 }.font(.system(size: 13, weight: .medium))
                     .frame(maxWidth: .infinity, alignment: .leading).padding(12)
                     .contentShape(Rectangle())
-                    .background(model.selected == nil ? accent.opacity(0.09) : .clear, in: RoundedRectangle(cornerRadius: 9))
+                    .background(model.selected == nil && !showingLinks ? accent.opacity(0.09) : .clear, in: RoundedRectangle(cornerRadius: 9))
             }.buttonStyle(.plain).padding(.horizontal, 12)
+            Button { showingLinks = true } label: {
+                Label(L("链路工作台"), systemImage: "point.3.connected.trianglepath.dotted")
+                    .font(.system(size: 13, weight: .medium))
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(12)
+                    .contentShape(Rectangle())
+                    .background(showingLinks ? accent.opacity(0.09) : .clear, in: RoundedRectangle(cornerRadius: 9))
+            }.buttonStyle(.plain).padding(.horizontal, 12).padding(.top, 5)
             HStack {
                 Text(L("服务器")).font(.system(size: 11, weight: .semibold)).foregroundStyle(muted)
                 Spacer()
@@ -999,9 +1015,9 @@ struct ContentView: View {
             ScrollView {
                 VStack(spacing: 5) {
                     ForEach(model.state.servers) { host in
-                        Button { model.selected = host.id } label: {
+                        Button { showingLinks = false; model.selected = host.id } label: {
                             HStack(spacing: 10) {
-                                Image(systemName: "server.rack").foregroundStyle(model.selected == host.id ? accent : muted)
+                                Image(systemName: "server.rack").foregroundStyle(model.selected == host.id && !showingLinks ? accent : muted)
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(host.name).font(.system(size: 12, weight: .medium)).lineLimit(1)
                                     Text(host.target).font(.system(size: 10)).foregroundStyle(muted).lineLimit(1)
@@ -1011,7 +1027,7 @@ struct ContentView: View {
                                     .frame(width: 6, height: 6)
                             }.frame(maxWidth: .infinity, alignment: .leading).padding(12)
                                 .contentShape(Rectangle())
-                                .background(model.selected == host.id ? accent.opacity(0.09) : .clear, in: RoundedRectangle(cornerRadius: 9))
+                                .background(model.selected == host.id && !showingLinks ? accent.opacity(0.09) : .clear, in: RoundedRectangle(cornerRadius: 9))
                         }.buttonStyle(.plain)
                     }
                 }.padding(.horizontal, 12)

@@ -353,6 +353,16 @@ def bundle_agent(agent):
     identity_bootstrap = 'uta_client = types.ModuleType("uta_client")\nexec(compile(' + repr(identity) + ', "<bundled uta_client>", "exec"), uta_client.__dict__)'
     if agent.count('import uta_client\n') != 1:
         raise RuntimeError('Unexpected agent client identity import layout')
-    return (agent.replace('import uta_ch341\n', bootstrap + '\n')
+    transfer = Path(__file__).with_name('uta_transfer.py').read_text()
+    transfer_bootstrap = 'import types\nuta_transfer = types.ModuleType("uta_transfer")\nexec(compile(' + repr(transfer) + ', "<bundled uta_transfer>", "exec"), uta_transfer.__dict__)'
+    if agent.count('import uta_transfer\n') != 1:
+        raise RuntimeError('Unexpected agent transfer import layout')
+    port = Path(__file__).with_name('uta_port_server.py').read_text()
+    port_bootstrap = 'uta_port_server = types.ModuleType("uta_port_server")\nexec(compile(' + repr(port) + ', "<bundled uta_port_server>", "exec"), uta_port_server.__dict__)'
+    if agent.count('import uta_port_server\n') != 1:
+        raise RuntimeError('Unexpected device operation import layout')
+    return (agent.replace('import uta_port_server\n', port_bootstrap + '\n')
+            .replace('import uta_transfer\n', transfer_bootstrap + '\n')
+            .replace('import uta_ch341\n', bootstrap + '\n')
             .replace('import uta_auth\n', auth_bootstrap + '\n')
             .replace('import uta_client\n', identity_bootstrap + '\n'))

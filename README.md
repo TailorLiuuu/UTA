@@ -6,19 +6,21 @@ UTA 将 Mac 上选定的真实 USB 设备，通过 SSH 接入远程 Linux 服务
 服务器上的工具直接使用虚拟 USB 和对应串口，固件与编译环境留在服务器，
 无需来回下载文件到本机烧录。
 
-**当前状态：0.1 实验原型，build 28（Preview 16）。** 已完成部分开发板实机验证，尚未完成通用 USB
-兼容性验收。当前支持 **macOS Apple Silicon → Linux**，没有 Windows 或 iOS 客户端。
+**当前状态：0.1 实验原型，build 30（Preview 17）。** 已完成部分开发板实机验证，尚未完成通用 USB
+兼容性验收。支持 **macOS Apple Silicon → Linux**，并提供 **Windows → Linux** 预览客户端；没有 iOS 客户端。
 提供预编译安装包与源码。预览版已签名，但尚未经过 Apple 公证。
 
 ## 下载 Mac 预览版
 
-**[下载 DMG 安装包](https://github.com/TailorLiuuu/UTA/releases/download/v0.1.0-preview.16/UTA-0.1.0-macOS-arm64.dmg)** ·
-[Release 与 ZIP 备用包](https://github.com/TailorLiuuu/UTA/releases/tag/v0.1.0-preview.16) ·
+**[下载 DMG 安装包](https://github.com/TailorLiuuu/UTA/releases/download/v0.1.0-preview.17/UTA-0.1.0-macOS-arm64.dmg)** ·
+[Release 与 ZIP 备用包](https://github.com/TailorLiuuu/UTA/releases/tag/v0.1.0-preview.17) ·
 [首次安装指南](docs/INSTALL-macOS.md)
 
 适用于 Apple Silicon / macOS 26，需另行安装 Python 3.9+。打开 DMG，将 UTA 拖入
 Applications，然后从“应用程序”启动。未公证的预览版可能需要在“隐私与安全性”中允许打开；
 USB 接管还需单独完成系统授权。首次安装、升级和卸载步骤见安装指南。
+
+[Windows 预览包](https://github.com/TailorLiuuu/UTA/releases/download/v0.1.0-preview.17/UTA-Windows-preview.zip) · [Windows 安装说明](windows/README.md)
 
 ## 能做什么
 
@@ -43,6 +45,8 @@ Preview 14 增加独立会话认证、客户端凭据及资源上限。共用 ro
 Preview 15 为新接入会话增加云端独立的 60 秒失联保护：Mac 无法发送清理请求时，也能释放原会话端口。需更新 Mac App 和云端 CLI；旧连接不被强制转换。保护机制不向 USB 数据流加入心跳、不限制吞吐。
 
 Preview 16 修复 macOS USB 库对高编号接口（32–255）的限制，并在授权接入失败时显示具体接口和错误。适用于 EC600M 等具有稀疏接口编号的复合设备；本次已通过离线回归，EC600M 实机接入尚未验证。需更新本机 App 并在设备全部断开后停用、重新启用 USB 接管服务；云端 CLI 保持 Preview 15，无需重复更新。
+
+Preview 17 增加加密固件传输、单设备跨客户端授权、远端工具执行和按需串口日志。普通场景直接在服务器页面操作；复杂关系可使用链路工作台。Mac、Windows 与云端 CLI 需配套更新，工具协议保持通用。详见 [单设备指南](docs/REMOTE-DEVICES.md)。
 
 ## 可选 CH340 串口加速
 
@@ -289,7 +293,12 @@ docs/     使用指南、验证记录与变更说明
 
 ## 文档与第三方许可
 
+- [单设备授权、远程烧录与日志](docs/REMOTE-DEVICES.md)：直接选择服务器使用，无需画链路；`uta port` 提供设备授权、端口解析、互斥执行原工具和按需日志回传。
+
+- [Mac 编译 → 云端烧录 → Windows USB：项目接入 README](docs/README-MAC-COMPILE-FLASH.md)：CLI 更新检查、无硬件首测和可交给固件项目会话的操作步骤。`python3 scripts/build-transfer-kit.py` 可生成接收端与文档包。
 - [安装、权限、CLI 与排错](docs/TESTING.md)
+- [加密文件传输与远端工具执行（CLI 预览）](docs/TRANSFERS.md)：`uta send` / `uta run` 使用已保存的服务器配置，支持校验续传，以及按客户端、项目和任务分开存放。接收文件不需要 USB 内核扩展或 root；共用 root 不构成安全隔离。
+- [可拖动的链路工作台（macOS 预览）](docs/LINK-WORKSPACE.md)
 - [通用 USB 事务接口](docs/USB-TRANSACTIONS.md)
 - [验证记录](docs/VERIFICATION.md) · [变更记录](docs/CHANGES.md)
 - [第三方来源与许可证](THIRD_PARTY.md)

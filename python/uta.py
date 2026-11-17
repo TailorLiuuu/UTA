@@ -26,6 +26,8 @@ import uta_privileged
 import uta_optimization
 import uta_auth
 import uta_client
+import uta_transfer
+import uta_port
 
 VERSION = "0.1.0"
 HERE = Path(__file__).resolve().parent
@@ -1233,6 +1235,8 @@ def request(data, start=True):
 def main():
     parser = argparse.ArgumentParser(prog="uta", description="UTA — Mac USB to remote Linux via SSH")
     sub = parser.add_subparsers(dest="command", required=True)
+    uta_transfer.add_commands(sub)
+    uta_port.add_commands(sub)
     sub.add_parser("daemon", help="run controller in foreground")
     sub.add_parser("status", help="JSON state: servers, devices and sessions")
     sub.add_parser("devices", help="JSON list of physical USB devices")
@@ -1273,6 +1277,19 @@ def main():
     dis.add_argument("--device", required=True)
     args = parser.parse_args()
     try:
+        if args.command == 'port':
+            servers = json.loads((HOME / 'config.json').read_text()).get('servers', [])
+            result = uta_port.dispatch(args, servers, lambda sid: uta_client.credential(HOME, sid), ssh_args)
+            success = not isinstance(result, dict) or uta_port.succeeded(result, args.port_action)
+            print(json.dumps(dict(ok=success, result=result), ensure_ascii=False), file=sys.stderr if getattr(args, 'raw', False) else sys.stdout)
+            return 0 if success else 1
+        if args.command in ('send', 'transfers', 'run'):
+            servers = json.loads((HOME / 'config.json').read_text()).get('servers', [])
+            result = uta_transfer.dispatch(args, servers, lambda sid: uta_client.credential(HOME, sid), ssh_args)
+            execution = result.get('execution', {})
+            success = not execution or (execution.get('state') == 'completed' and execution.get('exit_code') == 0)
+            print(json.dumps(dict(ok=success, result=result), ensure_ascii=False, indent=2))
+            return 0 if success else 1
         if args.command == 'client':
             servers = json.loads((HOME / 'config.json').read_text()).get('servers', [])
             if not any(s.get('id') == args.server for s in servers):
@@ -1331,7 +1348,7 @@ def main():
         print(json.dumps(output, ensure_ascii=False, indent=2))
         return 0 if output.get("ok") else 1
     except Exception as exc:
-        print(json.dumps(dict(ok=False, error=str(exc)), ensure_ascii=False))
+        print(json.dumps(dict(ok=False, error=str(exc)), ensure_ascii=False), file=sys.stderr if getattr(args, "raw", False) else sys.stdout)
         return 1
 
 
